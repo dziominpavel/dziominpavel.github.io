@@ -1,8 +1,8 @@
 ## 1. Инструменты и репозиторий стора
 
-- [ ] 1.1 Установить GitHub CLI (`winget install GitHub.cli`) и выполнить `gh auth login`; проверка: `gh --version` и `gh auth status` показывают готовность
+- [x] 1.1 Установить GitHub CLI (`winget install GitHub.cli`) и выполнить `gh auth login`; проверка: `gh --version` и `gh auth status` показывают готовность
 - [ ] 1.2 Создать публичный remote `dziominpavel.github.io` на GitHub и выполнить первый push (только по прямой команде владельца); проверка: репозиторий открывается на GitHub, содержит README. Локально git-репо уже инициализирован
-- [ ] 1.3 Дозавести каркас проекта: `registry.yaml` (запись FogMap для пилота), `templates/`, `static/` (css/js), `generate.py`, `.gitignore` (OpenSpec/OpenCode-структура уже создана init); проверка: структура каталогов на месте
+- [x] 1.3 Дозавести каркас проекта: `registry.yaml` (запись FogMap для пилота), `templates/`, `static/` (css/js), `generate.py`, `.gitignore` (OpenSpec/OpenCode-структура уже создана init); проверка: структура каталогов на месте
 - [ ] 1.4 Зарегистрировать бесплатный аккаунт GoatCounter и получить site ID; проверка: site ID получен и записан (понадобится в задаче 3.6)
 
 ## 2. Контракт в пилотном проекте (FogMap)
