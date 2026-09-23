@@ -36,15 +36,15 @@
 
 ## 6. CI и деплой
 
-- [ ] 6.1 Написать workflow `.github/workflows/build.yml`: cron каждые 30 мин + триггер по push `registry.yaml`/шаблонов + `workflow_dispatch`, шаг генерации с `GITHUB_TOKEN`; проверка: ручной запуск workflow зелёный, артефакт статики собран
-- [ ] 6.2 Настроить деплой статики на GitHub Pages из workflow; проверка: после push витрина доступна по `https://dziominpavel.github.io`
+- [x] 6.1 Написать workflow `.github/workflows/build.yml`: cron каждые 30 мин + триггер по push `registry.yaml`/шаблонов + `workflow_dispatch`, шаг генерации с `GITHUB_TOKEN`; проверка: ручной запуск workflow зелёный, артефакт статики собран
+- [x] 6.2 Настроить деплой статики на GitHub Pages из workflow; проверка: после push витрина доступна по `https://dziominpavel.github.io`
 - [ ] 6.3 Проверить end-to-end: правка description в FogMap + push → в течение цикла описание обновилось; новый релиз → версия/размер/ссылки обновились; проверка: оба сценария наблюдаемы на опубликованной витрине
 
 ## 7. Волна на остальные 6 проектов
 
 - [ ] 7.1 Написать скрипт-обновитель, разносящий эталон release-скрипта по репо (с проверкой версии скрипта); проверка: все 7 копий после разноса имеют одинаковую версию
 - [ ] 7.2 Во всех 6 проектах завести файл `version` (текущие версии), `store.yaml`, иконки (для YandexMusicDownloader и instagram-tracker — png 512×512 от владельца), `screenshots/`; проверка: валидация контракта проходит для всех 6
-- [ ] 7.3 Добавить 6 записей в `registry.yaml` стора; проверка: generate.py локально видит 7 проектов
+- [x] 7.3 Добавить 6 записей в `registry.yaml` стора; проверка: generate.py локально видит 7 проектов
 - [ ] 7.4 YandexMusicDownloader: добавить шаг упаковки `app.exe`+`ffmpeg.exe` в `Compress-Archive` → `dist/YandexMusicDownloader-X.Y.Z-win-x64.zip`; проверка: zip распаковывается и приложение запускается
 - [ ] 7.5 instagram-tracker: добавить сборку PyInstaller `--onefile` → `dist/InstagrammTracker-X.Y.Z-win-x64.exe`; проверка: exe запускается на чистой машине без Python, requirements на странице отражают специфику
 - [ ] 7.6 Выпустить релизы во всех 6 проектах release-скриптом; проверка: у всех 7 репо есть актуальный релиз с ассетами

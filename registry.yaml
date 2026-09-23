@@ -4,3 +4,15 @@
 projects:
   fogmap:
     repo: dziominpavel/FogMap
+  yandex-music-downloader:
+    repo: dziominpavel/YandexMusicDownloader
+  instagramm-tracker:
+    repo: dziominpavel/InstagrammTracker
+  charge-forecast:
+    repo: dziominpavel/ChargeForecast
+  gym-progress:
+    repo: dziominpavel/GymProgress
+  voice-mind:
+    repo: dziominpavel/VoiceMind
+  wishlot:
+    repo: dziominpavel/Wishlot
