@@ -1,1 +1,2 @@
-// Переключатель темы system/dark/light (см. задачу 5.2).
+// Тема: system/dark/light, по умолчанию dark; выбор сохраняется (localStorage).
+(function(){var k='theme',o=['system','dark','light'],ru={system:'Тема: системная',dark:'Тема: тёмная',light:'Тема: светлая'},m=localStorage.getItem(k)||'dark',t=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):m;document.documentElement.dataset.theme=t;var b=document.getElementById('theme-toggle');if(b){b.textContent=ru[m];b.onclick=function(){localStorage.setItem(k,o[(o.indexOf(m)+1)%3]);location.reload()}}})();

@@ -1,0 +1,66 @@
+name: build-site
+
+# Витрина «Мои приложения»: автосборка статики из GitHub Releases проектов.
+# Триггеры: cron каждые 30 мин (свежие версии/размеры/счётчики), push реестра
+# и шаблонов (новый проект/правка данных), ручной запуск.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - registry.yaml
+      - generate.py
+      - templates/**
+      - static/**
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Зависимости
+        run: pip install pyyaml
+
+      - name: Юнит-тесты генератора
+        run: python tests/test_generate.py
+
+      - name: Генерация витрины
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python generate.py --out _site
+
+      - name: Валидация собранной статики
+        run: python tests/validate_site.py _site
+
+      - name: Артефакт статики
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

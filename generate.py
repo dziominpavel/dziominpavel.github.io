@@ -205,7 +205,11 @@ def clone_project(repo: str, dest: str, token: str | None = None) -> bool:
 
 def collect_projects(entries: list[dict], token: str | None = None,
                      workdir: str | None = None) -> list[dict]:
-    """Собирает данные проектов: контракт (файлы) + релиз (GitHub API)."""
+    """Собирает данные проектов: контракт (файлы) + релиз (GitHub API).
+
+    workdir — общий каталог клонов; его удаляет вызывающий ПОСЛЕ рендера
+    (иконки/скриншоты копируются в витрину из клонов).
+    """
     collected: list[dict] = []
     tmp_root = workdir or tempfile.mkdtemp(prefix="store-build-")
     for entry in entries:
@@ -233,6 +237,7 @@ def collect_projects(entries: list[dict], token: str | None = None,
             continue
         collected.append(card)
     if workdir is None:
+        # Вызывающий не просил каталог — удаляем сами (рендер из него невозможен).
         shutil.rmtree(tmp_root, ignore_errors=True)
     return collected
 
@@ -429,7 +434,7 @@ APP_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / 
       {gallery}
     </article>"""
 
-ABOUT_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / О проекте</h1></nav>
+ABOUT_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / О проекте</nav>
     <h1>О проекте</h1>
     <p class="lead">«Мои приложения» — бесплатный каталог моих приложений: описания,
     системные требования, скриншоты и кнопки скачивания.</p>
@@ -500,7 +505,8 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
                render_page(title="Мои приложения — каталог для скачивания",
                            description="Каталог готовых приложений: версии, размеры и кнопки "
                                        "скачивания из GitHub Releases.",
-                           canonical=f"{SITE_URL}/", content=index, root=""),
+                           canonical=f"{SITE_URL}/", content=index, root="",
+                           scripts='<script src="static/js/filter.js" defer></script>'),
                "Тёмная")
 
     # --- страницы приложений ----------------------------------------------
@@ -589,19 +595,23 @@ def main(argv: list[str] | None = None) -> int:
 
     token = os.environ.get("GITHUB_TOKEN") or None
     entries = load_registry()
-    cards = collect_projects(entries, token)
+    workdir = tempfile.mkdtemp(prefix="store-build-")
+    try:
+        cards = collect_projects(entries, token, workdir=workdir)
 
-    if args.json:
-        slim = [{k: v for k, v in card.items()
-                 if k not in ("store", "project_dir", "assets", "screenshots")}
-                | {"platforms": {p: [a["name"] for a in variants]
-                                 for p, variants in card["platforms"].items()}}
-                for card in cards]
-        json.dump(slim, sys.stdout, ensure_ascii=False, indent=2, default=str)
-        print()
-        return 0
+        if args.json:
+            slim = [{k: v for k, v in card.items()
+                     if k not in ("store", "project_dir", "assets", "screenshots")}
+                    | {"platforms": {p: [a["name"] for a in variants]
+                                     for p, variants in card["platforms"].items()}}
+                    for card in cards]
+            json.dump(slim, sys.stdout, ensure_ascii=False, indent=2, default=str)
+            print()
+            return 0
 
-    pages = render_site(cards, args.out)
+        pages = render_site(cards, args.out)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
     print(f"projects: {len(cards)}, pages: {len(pages)}, out: {args.out}")
     for card in cards:
         print(f"  {card['slug']}: v{card['version']} "

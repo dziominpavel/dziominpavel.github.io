@@ -1,1 +1,314 @@
-/* Дизайн-токены и стили витрины (см. задачу 5.1). */
+/* Витрина «Мои приложения» — дизайн-токены, mobile-first, dark by default. */
+
+:root,
+[data-theme="dark"] {
+  --bg: #0f1419;
+  --surface: #161d26;
+  --surface-2: #1c2530;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --border: #232b36;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --android: #3ddc84;
+  --windows: #60a5fa;
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --radius: 14px;
+}
+
+[data-theme="light"] {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #eef2f7;
+  --text: #1f2328;
+  --muted: #59636e;
+  --border: #d8dee4;
+  --accent: #1d4ed8;
+  --accent-text: #ffffff;
+  --android: #128c4b;
+  --windows: #1d4ed8;
+  --shadow: 0 6px 20px rgba(15, 20, 25, 0.12);
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  line-height: 1.55;
+}
+
+a { color: var(--accent); }
+
+img { max-width: 100%; height: auto; }
+
+/* --- шапка / подвал ------------------------------------------------------ */
+
+.site-header,
+.site-main,
+.site-footer {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 12px 16px;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.site-nav {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.site-nav a { text-decoration: none; color: var(--muted); }
+.site-nav a:hover { color: var(--text); }
+
+.theme-toggle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.theme-toggle:hover { border-color: var(--accent); }
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 32px;
+}
+
+.crumbs { color: var(--muted); font-size: 14px; margin-bottom: 4px; }
+.crumbs a { text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+
+h1 { font-size: 26px; margin: 12px 0 8px; }
+h2 { font-size: 20px; margin: 24px 0 8px; }
+
+.lead { color: var(--muted); margin-top: 0; }
+
+/* --- фильтр и сетка карточек --------------------------------------------- */
+
+.filters { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+
+.filter {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.filter.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr; /* mobile-first: одна колонка */
+}
+
+@media (min-width: 640px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .grid { grid-template-columns: repeat(3, 1fr); }
+  h1 { font-size: 32px; }
+}
+
+/* --- карточка ------------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card:hover,
+.card:focus-within {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow);
+}
+
+.card-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+
+.card-icon,
+.app-icon { border-radius: 12px; object-fit: cover; }
+
+.card-icon { width: 56px; height: 56px; }
+.app-icon { width: 96px; height: 96px; }
+
+.card-title { display: flex; flex-direction: column; }
+.card-name { font-weight: 700; font-size: 17px; }
+.card-version { color: var(--muted); font-size: 13px; }
+.card-desc {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* буквенные заглушки вместо иконки */
+
+.letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  border-radius: 12px;
+  flex: none;
+}
+
+.letter-64 { width: 56px; height: 56px; font-size: 26px; }
+.letter-96 { width: 96px; height: 96px; font-size: 44px; }
+
+.badges { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.badge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.badge-android { color: var(--android); border-color: var(--android); }
+.badge-windows { color: var(--windows); border-color: var(--windows); }
+
+.card-actions { display: flex; flex-direction: column; gap: 8px; }
+
+.downloads { color: var(--muted); font-size: 13px; margin: 0; }
+
+.empty { color: var(--muted); text-align: center; padding: 32px 0; }
+
+/* --- кнопки скачивания ---------------------------------------------------- */
+
+.btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.btn:hover { transform: translateY(-2px); border-color: var(--accent); }
+
+.btn-android { border-left: 4px solid var(--android); }
+.btn-windows { border-left: 4px solid var(--windows); }
+
+.btn-lg { padding: 14px 18px; font-size: 16px; align-items: flex-start; }
+
+.btn-meta { color: var(--muted); font-size: 12px; font-weight: 400; word-break: break-all; }
+
+/* --- страница приложения --------------------------------------------------- */
+
+.app { display: flex; flex-direction: column; gap: 12px; }
+
+.app-head { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.app-head h1 { margin: 0; }
+.app-meta { color: var(--muted); margin: 4px 0; font-size: 14px; }
+
+.app-desc { margin: 4px 0; }
+
+.requirements {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.notice {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--windows);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.notice strong { color: var(--text); }
+
+.download {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.download h2 { margin-top: 0; }
+
+.app-buttons { display: flex; flex-direction: column; gap: 10px; }
+
+.sources { font-size: 14px; margin-bottom: 0; }
+
+.gallery .shots {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.shot:hover img { border-color: var(--accent); }
