@@ -6,8 +6,8 @@ projects:
     repo: dziominpavel/FogMap
   yandex-music-downloader:
     repo: dziominpavel/YandexMusicDownloader
-  instagramm-tracker:
-    repo: dziominpavel/InstagrammTracker
+  instagram-tracker:
+    repo: dziominpavel/InstagramTracker
   charge-forecast:
     repo: dziominpavel/ChargeForecast
   gym-progress:
