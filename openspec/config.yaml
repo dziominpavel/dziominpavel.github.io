@@ -1,0 +1,44 @@
+schema: spec-driven
+
+context: |
+  Language: ru
+  All artifacts must be written in ru.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  Стор «Мои приложения» — статический сайт-каталог готовых приложений
+  владельца для скачивания. Отдельный репозиторий dziominpavel.github.io,
+  хостинг GitHub Pages, деплой через GitHub Actions (cron-синхронизация).
+  Контракт данных: приложения хранят store.yaml + screenshots/ + version
+  и публикуют артефакты в GitHub Releases; стор читает их и генерит статику
+  (Python, без фреймворков). Приложения о сторе не знают. Всё бесплатно,
+  без платных сервисов, только русский язык витрины.
+  Потребители контракта (пилот): FogMap; остальные — 6 репозиториев
+  под owner dziominpavel.
+
+  Ключевые файлы контракта в потребителях: store.yaml (name, description,
+  icon [обязательна], requirements [опц.]), screenshots/ (3-5, единый
+  размер), version (MAJOR.MINOR.PATCH), dist/ (gitignored, staging).
+  В сторе: registry.yaml (список репозиториев, ключ = слаг [a-z0-9-]),
+  templates/, static/, generate.py.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
