@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import sys
 import tempfile
@@ -13,9 +16,14 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from generate import (  # noqa: E402
+    SITE_URL,
+    collect_web_projects,
     detect_platforms,
+    fmt_date,
     load_registry,
+    load_web_registry,
     release_card,
+    render_site,
     validate_project,
 )
 
@@ -175,10 +183,167 @@ def test_release_card_json():
     print("ok: JSON карточки (версия, размер, дата, ссылки, счётчик)")
 
 
+def _fake_web_clone(repo: str, dest: str, token=None) -> bool:
+    """Фейковый клон web-источника: контракт web/ + данные index.json."""
+    web = os.path.join(dest, "web")
+    os.makedirs(web, exist_ok=True)
+    with open(os.path.join(web, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write("<!DOCTYPE html>\n<html lang=\"ru\"><head><meta charset=\"utf-8\">"
+                 "<title>Демо-веб</title></head><body>Демо-веб</body></html>\n")
+    with open(os.path.join(web, "style.css"), "w", encoding="utf-8") as fh:
+        fh.write("body { color: #222; }\n")
+    data = os.path.join(dest, "data")
+    os.makedirs(data, exist_ok=True)
+    with open(os.path.join(data, "index.json"), "w", encoding="utf-8") as fh:
+        json.dump({"updated": "2026-01-15T00:00:00Z", "models": []}, fh)
+    return True
+
+
+def test_web_registry_and_publish_success():
+    """3.5: успешный web-источник -> карточка на главной + страница + URL в sitemap."""
+    import generate as gen
+    orig_clone = gen.clone_project
+    with tempfile.TemporaryDirectory() as tmp:
+        # a) реестр: валидные записи проходят, битые отбрасываются с WARN
+        reg_path = os.path.join(tmp, "registry.yaml")
+        with open(reg_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "projects:\n"
+                "  fogmap:\n"
+                "    repo: dziominpavel/FogMap\n"
+                "web:\n"
+                "  demo-web:\n"
+                "    repo: demo/Source\n"
+                "    title: Демо-веб\n"
+                "    description: Веб-демо для теста.\n"
+                "    data: data/index.json\n"
+                "  Bad_Slug:\n"
+                "    repo: demo/Source\n"
+                "    title: X\n"
+                "    description: Y\n"
+                "  no-meta:\n"
+                "    repo: demo/Source\n"
+                "  bad-repo:\n"
+                "    repo: без-слэша\n"
+                "    title: X\n"
+                "    description: Y\n"
+            )
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            web_entries = load_web_registry(reg_path)
+        assert [e["slug"] for e in web_entries] == ["demo-web"], web_entries
+        assert "WARN" in err.getvalue()
+
+        # b) успешный источник -> карточка (дата из index.json:updated)
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        gen.clone_project = _fake_web_clone
+        try:
+            web_cards = collect_web_projects(web_entries, workdir=work)
+        finally:
+            gen.clone_project = orig_clone
+        assert len(web_cards) == 1, web_cards
+        card = web_cards[0]
+        assert card["slug"] == "demo-web"
+        assert card["date"] == "2026-01-15T00:00:00Z"
+        assert card["icon"] is None
+        assert card["data_file"] == "data/index.json"
+        # регрессия fmt_date: календарная дата без таймзоны не уходит на день назад
+        assert fmt_date("2026-10-02") == "02.10.2026", fmt_date("2026-10-02")
+
+        # c) рендер: страница /apps/<slug>/, карточка, URL, данные рядом
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            urls = render_site([], web_cards, out)
+        finally:
+            os.chdir(cwd)
+
+        assert f"{SITE_URL}/apps/demo-web/" in urls, urls
+        assert os.path.isfile(os.path.join(out, "apps", "demo-web", "index.html"))
+        assert os.path.isfile(os.path.join(out, "apps", "demo-web", "index.json"))
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        assert "Веб-приложения" in home
+        assert 'href="apps/demo-web/"' in home
+        assert "Открыть в браузере" in home
+        assert "обновлено 15.01.2026" in home
+        assert 'class="web-card"' in home and 'class="card"' not in home.split(
+            "Веб-приложения")[1]
+        with open(os.path.join(out, "sitemap.xml"), encoding="utf-8") as fh:
+            sitemap = fh.read()
+        assert f"<loc>{SITE_URL}/apps/demo-web/</loc>" in sitemap
+
+        # д) запись без поля data: файл данных не копируется, дата — дата сборки
+        entries_no_data = [dict(entry) for entry in web_entries]
+        entries_no_data[0].pop("data")
+        gen.clone_project = _fake_web_clone
+        try:
+            cards_no_data = collect_web_projects(entries_no_data, workdir=work)
+        finally:
+            gen.clone_project = orig_clone
+        assert cards_no_data[0]["data_file"] is None
+        assert cards_no_data[0]["date"] != "2026-01-15T00:00:00Z"
+        os.chdir(root)
+        try:
+            out2 = os.path.join(tmp, "site2")
+            render_site([], cards_no_data, out2)
+        finally:
+            os.chdir(cwd)
+        assert os.path.isfile(os.path.join(out2, "apps", "demo-web", "index.html"))
+        assert not os.path.isfile(os.path.join(out2, "apps", "demo-web", "index.json"))
+    print("ok: web-источник -> карточка на главной, страница /apps/ и URL в sitemap")
+
+
+def test_web_publish_broken_source():
+    """3.5: битый источник -> skip без исключения (clone fail / нет web/index.html)."""
+    import generate as gen
+    orig_clone = gen.clone_project
+    with tempfile.TemporaryDirectory() as tmp:
+        entries = [{"slug": "ghost", "repo": "demo/Ghost",
+                    "title": "Призрак", "description": "Не собирается."}]
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+
+        # а) клон не удался -> пусто, без исключений
+        #    (WARN в этом пути печатает сам clone_project — существующий код)
+        gen.clone_project = lambda repo, dest, token=None: False
+        try:
+            result = collect_web_projects(entries, workdir=work)
+        finally:
+            gen.clone_project = orig_clone
+        assert result == []
+
+        # б) клон есть, но web/index.html отсутствует -> WARN + skip
+        def fake_clone_no_index(repo, dest, token=None):
+            os.makedirs(os.path.join(dest, "web"), exist_ok=True)
+            return True
+        gen.clone_project = fake_clone_no_index
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err2:
+                result = collect_web_projects(entries, workdir=work)
+        finally:
+            gen.clone_project = orig_clone
+        assert result == []
+        assert "WARN" in err2.getvalue() and "index.html" in err2.getvalue()
+
+        # в) битая запись реестра (нет title/description) -> skip, без исключений
+        with tempfile.TemporaryDirectory() as tmp2:
+            reg_path = os.path.join(tmp2, "registry.yaml")
+            with open(reg_path, "w", encoding="utf-8") as fh:
+                fh.write("web:\n  x:\n    repo: a/b\n")
+            with contextlib.redirect_stderr(io.StringIO()):
+                assert load_web_registry(reg_path) == []
+    print("ok: битый web-источник -> skip + warning, без исключений")
+
+
 if __name__ == "__main__":
     test_validate_ok()
     test_validate_broken_no_crash()
     test_registry_slug_validation()
     test_detect_platforms_variants_and_unknown()
     test_release_card_json()
+    test_web_registry_and_publish_success()
+    test_web_publish_broken_source()
     print("ALL PASS")

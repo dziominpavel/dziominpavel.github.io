@@ -16,3 +16,16 @@ projects:
     repo: dziominpavel/VoiceMind
   wishlot:
     repo: dziominpavel/Wishlot
+
+# Веб-приложения: статика из папки web/ репозитория-источника публикуется
+# на /apps/<slug>/. Без release/version/скриншотов — только repo/title/description.
+web:
+  benchmark:
+    repo: dziominpavel/Benchmark
+    title: Benchmark
+    description: "ELO-рейтинг языковых моделей: таблица лидеров, динамика рейтингов и лента прогонов — прямо в браузере."
+    data: data/index.json  # копируется рядом со страницей; дата карточки — из updated
+  instagram-tracker:
+    repo: dziominpavel/InstagramTracker
+    title: InstagramTracker Web
+    description: "Анализ экспорта Instagram в браузере: подписчики, взаимные и динамика списков — данные не покидают устройство."

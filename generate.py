@@ -36,6 +36,8 @@ DEFAULT_OUT_DIR = "_site"
 SITE_URL = "https://dziominpavel.github.io"
 GOATCOUNTER_SITE_ID = ""  # заполняется в задаче 5.3 (аккаунт владельца)
 SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+# Относительный путь к файлу данных внутри клонированного web-источника.
+DATA_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
 REQUIRED_FIELDS = ("name", "description", "icon")
 FORBIDDEN_FIELDS = ("version", "platforms")
 GITHUB_API = "https://api.github.com"
@@ -71,6 +73,54 @@ def load_registry(path: str = REGISTRY_PATH) -> list[dict]:
                   file=sys.stderr)
             continue
         entries.append({"slug": slug, "repo": repo})
+    return entries
+
+
+def load_web_registry(path: str = REGISTRY_PATH) -> list[dict]:
+    """Читает секцию `web:` (D3/D6): slug [a-z0-9-], repo, title, description.
+
+    Записи без GitHub Release и скриншотов; битые ключи/поля -> skip + warning.
+    """
+    with open(path, encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    web = data.get("web") or {}
+    if not isinstance(web, dict):
+        print("[WARN] registry: секция web: не маппинг — проигнорирована", file=sys.stderr)
+        return []
+    entries: list[dict] = []
+    for slug, record in web.items():
+        if not isinstance(slug, str) or not SLUG_RE.match(slug):
+            print(f"[WARN] registry: ключ web-записи {slug!r} не соответствует "
+                  f"[a-z0-9-] — пропущен", file=sys.stderr)
+            continue
+        if not isinstance(record, dict):
+            print(f"[WARN] registry[web:{slug}]: запись не маппинг — пропущена",
+                  file=sys.stderr)
+            continue
+        repo = record.get("repo")
+        if not isinstance(repo, str) or repo.count("/") != 1:
+            print(f"[WARN] registry[web:{slug}]: некорректный repo {repo!r} — "
+                  f"запись пропущена", file=sys.stderr)
+            continue
+        title = record.get("title")
+        description = record.get("description")
+        if not isinstance(title, str) or not title.strip() or \
+                not isinstance(description, str) or not description.strip():
+            print(f"[WARN] registry[web:{slug}]: нет title/description — запись "
+                  f"пропущена", file=sys.stderr)
+            continue
+        # Опциональный файл данных (Benchmark: data/index.json) — рядом со
+        # страницей; дата карточки берётся из его поля updated (D1/D3).
+        data_file = record.get("data")
+        if data_file is not None and (not isinstance(data_file, str)
+                                      or not DATA_PATH_RE.match(data_file)
+                                      or ".." in data_file):
+            print(f"[WARN] registry[web:{slug}]: поле data {data_file!r} — "
+                  f"игнорируется (ожидается относительный путь)", file=sys.stderr)
+            data_file = None
+        entries.append({"slug": slug, "repo": repo,
+                        "title": title.strip(), "description": description.strip(),
+                        "data": data_file})
     return entries
 
 
@@ -242,6 +292,76 @@ def collect_projects(entries: list[dict], token: str | None = None,
     return collected
 
 
+def collect_web_projects(entries: list[dict], token: str | None = None,
+                         workdir: str | None = None) -> list[dict]:
+    """Собирает web-записи (D1/D6): клон источника + контракт папки web/.
+
+    Успехом считается только наличие web/index.html — из него потом растут
+    страница, карточка на главной и URL в sitemap (skip + warning при неудаче).
+    """
+    collected: list[dict] = []
+    tmp_root = workdir or tempfile.mkdtemp(prefix="web-build-")
+    for entry in entries:
+        slug = entry["slug"]
+        # web-клон в отдельном пространстве имён: slug может совпадать
+        # с записью секции projects (instagram-tracker).
+        project_dir = os.path.join(tmp_root, f"web-{slug}")
+        if not clone_project(entry["repo"], project_dir, token):
+            continue
+        web_dir = os.path.join(project_dir, "web")
+        if not os.path.isfile(os.path.join(web_dir, "index.html")):
+            print(f"[WARN] {entry['repo']}: в web/ нет index.html — "
+                  f"веб-приложение {slug!r} пропущено", file=sys.stderr)
+            continue
+
+        # Дата обновления: updated из объявленного файла данных (Benchmark),
+        # иначе — дата сборки витрины (D3).
+        date = datetime.now(timezone.utc).date().isoformat()
+        data_file = entry.get("data")
+        if data_file:
+            data_path = os.path.join(project_dir, *data_file.split("/"))
+            if os.path.isfile(data_path):
+                try:
+                    with open(data_path, encoding="utf-8") as fh:
+                        updated = json.load(fh).get("updated")
+                    if updated:
+                        date = str(updated)
+                    else:
+                        print(f"[WARN] {slug}: в {data_file} нет поля updated — "
+                              f"дата берётся как дата сборки", file=sys.stderr)
+                except (json.JSONDecodeError, OSError, AttributeError) as exc:
+                    print(f"[WARN] {slug}: {data_file} не читается ({exc}) — "
+                          f"дата берётся как дата сборки", file=sys.stderr)
+            else:
+                print(f"[WARN] {slug}: файл данных {data_file} в источнике нет — "
+                      f"не копируется, дата — дата сборки", file=sys.stderr)
+                data_file = None
+        else:
+            data_file = None
+
+        # Иконка карточки: web/icon.* (опционально; нет — буквенный плейсхолдер).
+        icon = next((name for name in sorted(os.listdir(web_dir))
+                     if name.startswith("icon.")
+                     and name.lower().endswith((".png", ".svg", ".webp", ".jpg", ".jpeg"))),
+                    None)
+
+        collected.append({
+            "slug": slug,
+            "repo": entry["repo"],
+            "title": entry["title"],
+            "description": entry["description"],
+            "date": date,
+            "icon": icon,
+            "data_file": data_file,
+            "project_dir": project_dir,
+            "web_dir": web_dir,
+        })
+        print(f"[INFO] web:{slug}: статика web/ готова к публикации", file=sys.stderr)
+    if workdir is None:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+    return collected
+
+
 # ==========================================================================
 # Оформление: форматирование и разметка
 # ==========================================================================
@@ -267,8 +387,11 @@ def fmt_date(iso: str | None) -> str:
         return "—"
     try:
         moment = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
-        moment = moment.astimezone(timezone.utc)
-        return moment.strftime("%d.%m.%Y")
+        if moment.tzinfo is None:
+            # Календарная дата без таймзоны: astimezone() трактовал бы её как
+            # локальное время и при выводе в UTC уводил на день назад.
+            return moment.strftime("%d.%m.%Y")
+        return moment.astimezone(timezone.utc).strftime("%d.%m.%Y")
     except ValueError:
         return str(iso)
 
@@ -362,6 +485,52 @@ def card_html(card: dict) -> str:
            title="Исходники на GitHub">{SOURCES_SVG}</a>
       </div>
     </article>"""
+
+
+def web_icon_html(web_card: dict) -> str:
+    """Иконка web-карточки: web/icon.* (уже скопирован в apps/<slug>/) или заглушка."""
+    if not web_card.get("icon"):
+        return letter_placeholder(web_card["title"], "64")
+    src = f'apps/{web_card["slug"]}/{web_card["icon"]}'
+    return (f'<img class="card-icon" src="{esc(src)}" alt="Иконка '
+            f'{esc(web_card["title"])}" width="96" height="96">')
+
+
+def web_card_html(web_card: dict) -> str:
+    """Карточка веб-приложения (store-web-apps: без версии, размера и счётчика)."""
+    url = esc(f'apps/{web_card["slug"]}/')
+    repo_url = esc(f"https://github.com/{web_card['repo']}")
+    return f"""      <article class="web-card">
+        <div class="card-head">
+          {web_icon_html(web_card)}
+          <span class="card-title">
+            <span class="card-name">{esc(web_card['title'])}</span>
+            <span class="card-meta">обновлено {fmt_date(web_card['date'])}</span>
+          </span>
+        </div>
+        <p class="card-desc">{esc(web_card['description'])}</p>
+        <div class="card-actions">
+          <a class="btn btn-primary" href="{url}">Открыть в браузере</a>
+          <a class="icon-btn" href="{repo_url}" rel="noopener"
+             aria-label="Исходники {esc(web_card['title'])} на GitHub"
+             title="Исходники на GitHub">{SOURCES_SVG}</a>
+        </div>
+      </article>"""
+
+
+def web_section_html(web_cards: list[dict]) -> str:
+    """Блок «Веб-приложения» на главной: после сетки, вне зоны filter.js
+    (у карточек класс web-card, а не card — фильтр их не трогает)."""
+    if not web_cards:
+        return ""
+    cards = "\n".join(web_card_html(web_card) for web_card in web_cards)
+    return f"""
+    <section class="web-apps" aria-labelledby="web-apps-title">
+      <h2 id="web-apps-title">Веб-приложения</h2>
+      <div class="web-grid">
+{cards}
+      </div>
+    </section>"""
 
 
 def gallery_html(card: dict) -> str:
@@ -536,7 +705,7 @@ def write_page(path: str, markup: str) -> None:
         fh.write(markup)
 
 
-def render_site(cards: list[dict], out_dir: str) -> list[str]:
+def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[str]:
     """Генерирует главную, страницы приложений, «О проекте», favicon, sitemap.
 
     Возвращает список относительных путей всех страниц (для sitemap).
@@ -554,6 +723,7 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
     n_windows = sum(1 for c in cards if "windows" in c["platforms"])
     index = INDEX_TEMPLATE.format(cards=cards_html, total=total, android=n_android,
                                   windows=n_windows, total_word=plural_apps(total))
+    index += web_section_html(web_cards)  # блок «Веб-приложения» — после сетки
     write_page(os.path.join(out_dir, "index.html"),
                render_page(title="Мои приложения — каталог для скачивания",
                            description="Каталог готовых приложений: версии, размеры и кнопки "
@@ -605,6 +775,17 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
             for shot in card["screenshots"]:
                 shutil.copy2(os.path.join(shots_src, shot), os.path.join(shots_dst, shot))
 
+    # --- веб-приложения: /apps/<slug>/ (D1: успех копирования = всё) --------
+    for web_card in web_cards:
+        dest = os.path.join(out_dir, "apps", web_card["slug"])
+        shutil.copytree(web_card["web_dir"], dest)
+        # Объявленный файл данных — рядом со страницей (Benchmark: index.json,
+        # страница читает его локальным fetch).
+        if web_card.get("data_file"):
+            src = os.path.join(web_card["project_dir"], *web_card["data_file"].split("/"))
+            shutil.copy2(src, os.path.join(dest, os.path.basename(web_card["data_file"])))
+        pages.append(f"apps/{web_card['slug']}")
+
     # --- «О проекте» --------------------------------------------------------
     write_page(os.path.join(out_dir, "about", "index.html"),
                render_page(title="О проекте — Мои приложения",
@@ -645,6 +826,7 @@ def main(argv: list[str] | None = None) -> int:
 
     token = os.environ.get("GITHUB_TOKEN") or None
     entries = load_registry()
+    web_entries = load_web_registry()
     workdir = tempfile.mkdtemp(prefix="store-build-")
     try:
         cards = collect_projects(entries, token, workdir=workdir)
@@ -659,13 +841,18 @@ def main(argv: list[str] | None = None) -> int:
             print()
             return 0
 
-        pages = render_site(cards, args.out)
+        web_cards = collect_web_projects(web_entries, token, workdir=workdir)
+        pages = render_site(cards, web_cards, args.out)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-    print(f"projects: {len(cards)}, pages: {len(pages)}, out: {args.out}")
+    print(f"projects: {len(cards)}, web: {len(web_cards)}, pages: {len(pages)}, "
+          f"out: {args.out}")
     for card in cards:
         print(f"  {card['slug']}: v{card['version']} "
               f"({', '.join(PLATFORM_TITLES[p] for p in card['platforms'])})")
+    for web_card in web_cards:
+        print(f"  web:{web_card['slug']}: /apps/{web_card['slug']}/ "
+              f"(обновлено {fmt_date(web_card['date'])})")
     return 0
 
 

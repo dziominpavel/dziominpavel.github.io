@@ -550,6 +550,39 @@ p { margin: 0 0 var(--sp-3); }
   overflow: hidden;
 }
 
+/* --- блок «Веб-приложения» на главной ------------------------------------- */
+
+/* Отдельные классы (не .card): filter.js не должен прятать web-карточки. */
+.web-grid {
+  display: grid;
+  gap: var(--sp-4);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .web-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.web-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-5);
+  transition: transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.web-card:hover,
+.web-card:focus-within {
+  transform: translateY(-4px);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-2);
+}
+
 /* буквенные заглушки вместо иконки */
 
 .letter {
