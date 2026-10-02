@@ -33,4 +33,4 @@
 
 - [x] 6.1 Полный локальный прогон: `python generate.py --out _site` → `python tests/test_generate.py` → `python tests/validate_site.py _site` — проверка: ALL PASS / ALL OK
 - [x] 6.2 Браузерный гейт: тема dark/light + перезагрузка без вспышки, фильтры, главная и страница приложения, mobile и desktop — проверка: чек-лист пройден визуально в обеих темах
-- [ ] 6.3 Push, CI-деплой, smoke живого сайта (тема сохраняется после reload, фильтры работают) — проверка: workflow success, https://dziominpavel.github.io отвечает обновлённой витриной
+- [x] 6.3 Push, CI-деплой, smoke живого сайта (тема сохраняется после reload, фильтры работают) — проверка: workflow success, https://dziominpavel.github.io отвечает обновлённой витриной
