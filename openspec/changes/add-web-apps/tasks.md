@@ -27,4 +27,4 @@
 
 - [x] 4.1 Полный локальный прогон: `python generate.py --out _site` → `python tests/test_generate.py` → `python tests/validate_site.py _site` (включая маркеры на всех web-страницах) — проверка: ALL PASS / ALL OK
 - [x] 4.2 Браузерная проверка: `/apps/benchmark/` (таблица, график, лента, отсутствие форм), `/apps/instagram-tracker/` (инструкция, drag&drop реального экспорта, дашборд, повторная загрузка → динамика, ошибки), навигация назад, тема тёмная/светлая на web-страницах — проверка: чек-лист пройден в обеих темах
-- [ ] 4.3 Push, CI-деплой, smoke живого сайта — проверка: workflow success; https://dziominpavel.github.io/apps/benchmark/ и /apps/instagram-tracker/ отвечают, блок виден на главной
+- [x] 4.3 Push, CI-деплой, smoke живого сайта — проверка: workflow success; https://dziominpavel.github.io/apps/benchmark/ и /apps/instagram-tracker/ отвечают, блок виден на главной
