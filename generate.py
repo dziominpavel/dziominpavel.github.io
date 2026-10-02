@@ -273,6 +273,15 @@ def fmt_date(iso: str | None) -> str:
         return str(iso)
 
 
+def plural_apps(count: int) -> str:
+    """Склонение существительного после числа: 1 приложение, 2 приложения, 5 приложений."""
+    if count % 10 == 1 and count % 100 != 11:
+        return "приложение"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "приложения"
+    return "приложений"
+
+
 def letter_placeholder(name: str, size: str = "48") -> str:
     """Цветная буквенная заглушка по первой букве названия."""
     letter = esc(str(name).strip()[:1].upper() or "?")
@@ -283,51 +292,75 @@ def letter_placeholder(name: str, size: str = "48") -> str:
     )
 
 
-def app_icon_html(card: dict, css_class: str, size: str = "48") -> str:
+def app_icon_html(card: dict, css_class: str, size: str = "48", root: str = "") -> str:
     if card["icon_missing"] or not card["store"].get("icon"):
         return letter_placeholder(card["store"]["name"], size)
-    src = f'{card["slug"]}/icon{os.path.splitext(card["store"]["icon"])[1]}'
+    src = f'{root}{card["slug"]}/icon{os.path.splitext(card["store"]["icon"])[1]}'
     return (f'<img class="{esc(css_class)}" src="{esc(src)}" alt="Иконка '
             f'{esc(card["store"]["name"])}" width="96" height="96">')
 
 
+SOURCES_SVG = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M14 5h5v5"/><path d="M19 5l-8 8"/>'
+    '<path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"/></svg>'
+)
+
+
 def buttons_html(card: dict, *, big: bool = False) -> str:
-    """Кнопки скачивания по каждой платформе (варианты ассетов — с именем и размером)."""
+    """Кнопки скачивания по каждой платформе (варианты ассетов — с именем и размером).
+
+    Первая кнопка — primary CTA, остальные — secondary. Мета (имя файла · размер)
+    показывается всегда на странице приложения и на карточке, когда у платформы
+    несколько вариантов ассета.
+    """
+    items = [(platform, asset)
+             for platform, assets in card["platforms"].items()
+             for asset in assets]
     out = []
-    for platform, assets in card["platforms"].items():
-        for asset in assets:
-            name = esc(asset.get("name"))
-            url = esc(asset.get("browser_download_url"))
-            label = PLATFORM_TITLES[platform]
-            size = fmt_size(int(asset.get("size") or 0))
-            cls = f"btn btn-{platform}" + (" btn-lg" if big else "")
-            extra = f'<span class="btn-meta">{name} · {size}</span>' if big else ""
-            out.append(
-                f'<a class="{cls}" href="{url}" download data-platform="{platform}">'
-                f'Скачать {esc(label)}{extra}</a>'
-            )
+    for index, (platform, asset) in enumerate(items):
+        name = esc(asset.get("name"))
+        url = esc(asset.get("browser_download_url"))
+        label = esc(PLATFORM_TITLES[platform])
+        size = fmt_size(int(asset.get("size") or 0))
+        show_meta = big or len(card["platforms"][platform]) > 1
+        kind = "btn-primary" if index == 0 else "btn-secondary"
+        cls = f"btn {kind}" + (" btn-lg" if big else "")
+        meta = f'<span class="btn-meta">{name} · {size}</span>' if show_meta else ""
+        out.append(
+            f'<a class="{cls}" href="{url}" download data-platform="{platform}">'
+            f'<span class="btn-label">Скачать {label}</span>{meta}</a>'
+        )
     return "\n".join(out)
 
 
 def card_html(card: dict) -> str:
     store = card["store"]
     platforms = " ".join(card["platforms"])
-    badges = "".join(
-        f'<span class="badge badge-{p}">{esc(PLATFORM_TITLES[p])}</span>'
+    chips = "".join(
+        f'<span class="chip chip-{p}">{esc(PLATFORM_TITLES[p])}</span>'
         for p in card["platforms"]
     )
+    repo_url = esc(f"https://github.com/{card['repo']}")
     return f"""    <article class="card" data-platforms="{esc(platforms)}">
       <a class="card-head" href="{esc(card['slug'])}/">
         {app_icon_html(card, 'card-icon', '64')}
         <span class="card-title">
           <span class="card-name">{esc(store['name'])}</span>
-          <span class="card-version">v{esc(card['version'])} · {fmt_size(card['size'])}</span>
+          <span class="card-meta">v{esc(card['version'])} · {fmt_size(card['size'])}</span>
         </span>
       </a>
+      <div class="chips">{chips}</div>
       <p class="card-desc">{esc(store['description'])}</p>
-      <div class="badges">{badges}</div>
-      <div class="card-actions">{buttons_html(card)}</div>
-      <p class="downloads">Скачиваний: {card['downloads']:,}</p>
+      <p class="card-stats"><span>Скачиваний: {card['downloads']:,}</span>
+        <span aria-hidden="true">·</span><span>{fmt_date(card['date'])}</span></p>
+      <div class="card-actions">
+        {buttons_html(card)}
+        <a class="icon-btn" href="{repo_url}" rel="noopener"
+           aria-label="Исходники {esc(store['name'])} на GitHub"
+           title="Исходники на GitHub">{SOURCES_SVG}</a>
+      </div>
     </article>"""
 
 
@@ -348,11 +381,11 @@ def gallery_html(card: dict) -> str:
 def windows_notice_html(card: dict) -> str:
     if "windows" not in card["platforms"]:
         return ""
-    return """<aside class="notice">
+    return """<div class="notice">
       <strong>Windows может показать предупреждение.</strong> Файл не подписан
       сертификатом, поэтому SmartScreen или антивирус предупредят при первом запуске —
       это нормально. Код открыт: можно посмотреть и собрать самостоятельно.
-    </aside>"""
+    </div>"""
 
 
 # ==========================================================================
@@ -372,19 +405,25 @@ BASE_TEMPLATE = """<!DOCTYPE html>
   <meta property="og:type" content="{og_type}">
   <meta property="og:url" content="{canonical}">
   <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" content="#0f1419">
+  <meta name="theme-color" content="#0a0b10">
   <link rel="icon" type="image/svg+xml" href="{root}favicon.svg">
+  <script>try{{var t=localStorage.getItem('theme');var d=document.documentElement;d.dataset.theme=(t==='light'?'light':'dark');d.style.colorScheme=d.dataset.theme;var m=document.querySelector('meta[name=theme-color]');if(m){{m.setAttribute('content',d.dataset.theme==='dark'?'#0a0b10':'#f4f6fa')}}}}catch(e){{}}</script>
   <link rel="stylesheet" href="{root}static/css/style.css">
   {analytics}
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="{root}">Мои приложения</a>
-    <nav class="site-nav">
-      <a href="{root}">Главная</a>
-      <a href="{root}about/">О проекте</a>
-      <button id="theme-toggle" class="theme-toggle" type="button">Тема: {theme_label}</button>
-    </nav>
+    <div class="site-header-inner">
+      <a class="brand" href="{root}"><span class="brand-mark" aria-hidden="true">М</span>Мои приложения</a>
+      <nav class="site-nav" aria-label="Навигация">
+        <a href="{root}">Главная</a>
+        <a href="{root}about/">О проекте</a>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Переключить тему" title="Переключить тему">
+          <svg class="tt-icon tt-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="tt-icon tt-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+      </nav>
+    </div>
   </header>
   <main class="site-main">
 {content}
@@ -399,12 +438,21 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-INDEX_TEMPLATE = """    <h1>Мои приложения</h1>
-    <p class="lead">Готовые приложения для скачивания: версии, размеры и кнопки — всегда свежие, из GitHub Releases.</p>
+INDEX_TEMPLATE = """    <section class="hero">
+      <div class="hero-text">
+        <h1>Мои приложения</h1>
+        <p class="lead">Готовые приложения для скачивания: версии, размеры и кнопки — всегда свежие, из GitHub Releases.</p>
+      </div>
+      <ul class="hero-stats" aria-label="Статистика каталога">
+        <li><strong class="stat-num">{total}</strong><span class="stat-label">{total_word}</span></li>
+        <li><strong class="stat-num">{android}</strong><span class="stat-label">Android</span></li>
+        <li><strong class="stat-num">{windows}</strong><span class="stat-label">Windows</span></li>
+      </ul>
+    </section>
     <div class="filters" role="group" aria-label="Фильтр по платформе">
-      <button class="filter is-active" type="button" data-filter="all">Все</button>
-      <button class="filter" type="button" data-filter="android">Android</button>
-      <button class="filter" type="button" data-filter="windows">Windows</button>
+      <button class="filter is-active" type="button" data-filter="all">Все <span class="filter-count">{total}</span></button>
+      <button class="filter" type="button" data-filter="android">Android <span class="filter-count">{android}</span></button>
+      <button class="filter" type="button" data-filter="windows">Windows <span class="filter-count">{windows}</span></button>
     </div>
     <div class="grid">
 {cards}
@@ -412,27 +460,29 @@ INDEX_TEMPLATE = """    <h1>Мои приложения</h1>
     <p class="empty" id="empty-state" hidden>Под эту платформу пока нет приложений.</p>"""
 
 APP_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / {name}</nav>
-    <article class="app">
-      <header class="app-head">
-        {icon}
-        <div>
-          <h1>{name}</h1>
-          <p class="app-meta">Версия {version} · {size} · обновлено {date}</p>
-          <p class="downloads">Скачиваний: {downloads}</p>
-        </div>
-      </header>
-      <p class="app-desc">{description}</p>
-      {requirements}
-      {notice}
-      <section class="download">
+    <div class="app">
+      <div class="app-main">
+        <header class="app-head">
+          {icon}
+          <div>
+            <h1>{name}</h1>
+            <p class="app-meta">Версия {version} · {size} · обновлено {date}</p>
+            <p class="card-stats">Скачиваний: {downloads}</p>
+          </div>
+        </header>
+        <p class="app-desc">{description}</p>
+        {requirements}
+        {gallery}
+      </div>
+      <aside class="download" aria-label="Скачивание">
         <h2>Скачать</h2>
         <div class="app-buttons">
 {buttons}
         </div>
-        <p class="sources"><a href="{repo_url}" rel="noopener">Исходники</a></p>
-      </section>
-      {gallery}
-    </article>"""
+        {notice}
+        <p class="sources"><a href="{repo_url}" rel="noopener">Исходники на GitHub</a></p>
+      </aside>
+    </div>"""
 
 ABOUT_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / О проекте</nav>
     <h1>О проекте</h1>
@@ -477,14 +527,13 @@ def render_page(*, title: str, description: str, canonical: str, content: str,
         content=content,
         analytics=analytics_html(),
         scripts=scripts,
-        theme_label="{theme_label}",
     )
 
 
-def write_page(path: str, markup: str, theme_label: str) -> None:
+def write_page(path: str, markup: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(markup.replace("{theme_label}", theme_label))
+        fh.write(markup)
 
 
 def render_site(cards: list[dict], out_dir: str) -> list[str]:
@@ -500,14 +549,17 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
     # --- главная -----------------------------------------------------------
     cards_html = "\n".join(card_html(card) for card in cards) or \
         "    <p class=\"empty\">Пока нет опубликованных приложений.</p>"
-    index = INDEX_TEMPLATE.format(cards=cards_html)
+    total = len(cards)
+    n_android = sum(1 for c in cards if "android" in c["platforms"])
+    n_windows = sum(1 for c in cards if "windows" in c["platforms"])
+    index = INDEX_TEMPLATE.format(cards=cards_html, total=total, android=n_android,
+                                  windows=n_windows, total_word=plural_apps(total))
     write_page(os.path.join(out_dir, "index.html"),
                render_page(title="Мои приложения — каталог для скачивания",
                            description="Каталог готовых приложений: версии, размеры и кнопки "
                                        "скачивания из GitHub Releases.",
                            canonical=f"{SITE_URL}/", content=index, root="",
-                           scripts='<script src="static/js/filter.js" defer></script>'),
-               "Тёмная")
+                           scripts='<script src="static/js/filter.js" defer></script>'))
 
     # --- страницы приложений ----------------------------------------------
     for card in cards:
@@ -519,7 +571,7 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
         app = APP_TEMPLATE.format(
             root="../",
             name=esc(store["name"]),
-            icon=app_icon_html(card, "app-icon", "96"),
+            icon=app_icon_html(card, "app-icon", "96", root="../"),
             version=esc(card["version"]),
             size=fmt_size(card["size"]),
             date=fmt_date(card["date"]),
@@ -536,8 +588,7 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
                                      f"{', '.join(PLATFORM_TITLES[p] for p in card['platforms'])}",
                                description=store["description"],
                                canonical=f"{SITE_URL}/{card['slug']}/",
-                               content=app, root="../", og_type="website"),
-                   "Тёмная")
+                               content=app, root="../", og_type="website"))
         pages.append(card["slug"])
 
         # файлы проекта на страницу: иконка + скриншоты
@@ -560,8 +611,7 @@ def render_site(cards: list[dict], out_dir: str) -> list[str]:
                            description="Как устроен бесплатный каталог приложений: "
                                        "автосборка из GitHub Releases и открытый код.",
                            canonical=f"{SITE_URL}/about/", content=ABOUT_TEMPLATE.format(root="../"),
-                           root="../"),
-               "Тёмная")
+                           root="../"))
     pages.append("about")
 
     # --- статика, favicon ---------------------------------------------------
