@@ -538,6 +538,7 @@ p { margin: 0 0 var(--sp-3); }
 
 .chip-android { background: var(--android-tint); color: var(--android); }
 .chip-windows { background: var(--windows-tint); color: var(--windows); }
+.chip-web { background: var(--surface-2); color: var(--accent); }
 
 .chip::before {
   content: "";
@@ -561,7 +562,9 @@ p { margin: 0 0 var(--sp-3); }
 /* --- блок «Веб-приложения» на главной ------------------------------------- */
 
 /* Отдельные классы (не .card): filter.js не трогает web-карточки поштучно —
- * он скрывает/показывает секцию .web-apps целиком (сегмент «Веб»/«Все»). */
+ * он скрывает/показывает секцию .web-apps целиком (сегмент «Веб»/«Все»).
+ * Сетка и макет карточки консистентны с .grid/.card: те же 3 колонки,
+ * те же строки head → chips → desc → stats → actions. */
 .web-grid {
   display: grid;
   gap: var(--sp-4);
@@ -570,6 +573,10 @@ p { margin: 0 0 var(--sp-3); }
 
 @media (min-width: 640px) {
   .web-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .web-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
 .web-card {
@@ -583,7 +590,11 @@ p { margin: 0 0 var(--sp-3); }
   transition: transform var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease),
     border-color var(--dur) var(--ease);
+  animation: card-in 380ms var(--ease) backwards;
 }
+
+.web-grid .web-card:nth-child(1) { animation-delay: 0ms; }
+.web-grid .web-card:nth-child(2) { animation-delay: 45ms; }
 
 .web-card:hover,
 .web-card:focus-within {

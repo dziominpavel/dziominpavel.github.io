@@ -269,7 +269,7 @@ def test_web_registry_and_publish_success():
         assert 'data-filter="web"' in home  # сегмент «Веб» в фильтре главной
         assert 'href="apps/demo-web/"' in home
         assert "Открыть в браузере" in home
-        assert "обновлено 15.01.2026" in home
+        assert "Обновлено 15.01.2026" in home
         assert 'class="web-card"' in home and 'class="card"' not in home.split(
             "Веб-приложения")[1]
         with open(os.path.join(out, "sitemap.xml"), encoding="utf-8") as fh:

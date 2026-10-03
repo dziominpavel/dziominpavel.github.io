@@ -497,18 +497,22 @@ def web_icon_html(web_card: dict) -> str:
 
 
 def web_card_html(web_card: dict) -> str:
-    """Карточка веб-приложения (store-web-apps: без версии, размера и счётчика)."""
+    """Карточка веб-приложения (store-web-apps: без версии, размера и счётчика).
+
+    Макет консистентен с .card: head (иконка+название) → chips → описание →
+    строка статистики (дата обновления) → действия; head ссылается на страницу."""
     url = esc(f'apps/{web_card["slug"]}/')
     repo_url = esc(f"https://github.com/{web_card['repo']}")
     return f"""      <article class="web-card">
-        <div class="card-head">
+        <a class="card-head" href="{url}">
           {web_icon_html(web_card)}
           <span class="card-title">
             <span class="card-name">{esc(web_card['title'])}</span>
-            <span class="card-meta">обновлено {fmt_date(web_card['date'])}</span>
           </span>
-        </div>
+        </a>
+        <div class="chips"><span class="chip chip-web">Веб</span></div>
         <p class="card-desc">{esc(web_card['description'])}</p>
+        <p class="card-stats"><span>Обновлено {fmt_date(web_card['date'])}</span></p>
         <div class="card-actions">
           <a class="btn btn-primary" href="{url}">Открыть в браузере</a>
           <a class="icon-btn" href="{repo_url}" rel="noopener"
