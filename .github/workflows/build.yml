@@ -14,6 +14,8 @@ on:
       - generate.py
       - templates/**
       - static/**
+      - scripts/**
+      - tests/**
       - .github/workflows/build.yml
   workflow_dispatch:
 
@@ -41,6 +43,9 @@ jobs:
 
       - name: Юнит-тесты генератора
         run: python tests/test_generate.py
+
+      - name: Юнит-тесты release-скрипта
+        run: python tests/test_release_phases.py
 
       - name: Генерация витрины
         env:

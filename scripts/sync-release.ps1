@@ -1,41 +1,50 @@
 ﻿<#
 .SYNOPSIS
-  Скрипт-обновитель (задача 7.1 change'а add-app-store): разносит эталонный
-  release-скрипт (release.ps1 + release.bat) по всем репозиториям витрины.
+  Скрипт разноса: доставляет эталонные файлы версионирования во все проекты
+  владельца и следит за согласованностью копий.
 
 .DESCRIPTION
-  Источник истины — registry.yaml (как и у generate.py), либо явный список
-  -Repos owner/name. Для каждого репозитория:
-    1) читает удалённый release.ps1 и извлекает $SCRIPT_VERSION;
-    2) сравнивает с версией эталона из scripts/release.ps1;
-    3) без -Apply — только отчёт (dry-run); с -Apply — создаёт/обновляет оба
-       файла (release.ps1 и release.bat) коммитом в ветку по умолчанию;
-    4) в конце повторно сверяет версии всех копий: они обязаны совпасть.
+  Источник проектов — versioning.yaml (все 12 проектов и их трек).
+  registry.yaml НЕ используется: он описывает контракт витрины, а не перечень
+  проектов, и трек static туда не входит.
+
+  Два канала доставки:
+    1) ЛОКАЛЬНЫЙ (docs/versioning.md, scripts/check-version.py, скелет
+       CHANGELOG.md, блок AGENTS.md по маркерам <!-- versioning:begin/end -->,
+       а для release-трека ещё release.ps1 + release.bat) — пишется в
+       локальную копию проекта, каталог берётся из versioning.yaml.
+    2) УДАЛЁННЫЙ (release.ps1 + release.bat через GitHub API) — только для
+       release-трека; static-треку release-скрипт не разносится.
+
+  Режим: без -Apply — только план (ничего не пишется); с -Apply — запись.
+  -LocalOnly — локальный канал сам по себе: без обращений к gh, без проверки
+  и записи удалённых копий release-скрипта (удалённый разнос — отдельное,
+  явное действие).
+  В конце всегда сверяются фактические копии с эталоном: расхождение -> exit 1.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File sync-release.ps1           # dry-run
-  powershell -ExecutionPolicy Bypass -File sync-release.ps1 -Apply    # разнос
+  powershell -ExecutionPolicy Bypass -File sync-release.ps1                    # план
+  powershell -ExecutionPolicy Bypass -File sync-release.ps1 -LocalOnly -Apply  # разнос локально
+  powershell -ExecutionPolicy Bypass -File sync-release.ps1 -Apply             # разнос + удалённый канал
 #>
 param(
-    [string]$RegistryPath = (Join-Path $PSScriptRoot "..\registry.yaml"),
+    [string]$VersioningPath = (Join-Path $PSScriptRoot "..\versioning.yaml"),
     [string[]]$Repos,
+    [switch]$LocalOnly,
     [switch]$Apply
 )
 
 $ErrorActionPreference = "Stop"
 
-# --- gh может быть не в PATH у утилитных шеллов -----------------------------
-$GhCmd = (Get-Command gh -ErrorAction SilentlyContinue).Source
-if (-not $GhCmd) {
-    $fallback = "C:\Program Files\GitHub CLI\gh.exe"
-    if (Test-Path $fallback) { $GhCmd = $fallback }
-    else { Write-Host "[ERROR] gh не найден (PATH и $fallback)" -ForegroundColor Red; exit 1 }
-}
-
-# --- эталон -----------------------------------------------------------------
+# --- эталоны -----------------------------------------------------------------
 $SourcePs1 = Join-Path $PSScriptRoot "release.ps1"
 $SourceBat = Join-Path $PSScriptRoot "release.bat"
-foreach ($f in @($SourcePs1, $SourceBat)) {
+$Root = Split-Path -Parent $PSScriptRoot
+$SourceVersioning = Join-Path $Root "docs\versioning.md"
+$SourceCheck = Join-Path $PSScriptRoot "check-version.py"
+$SourceAgents = Join-Path $Root "docs\agents-versioning-block.md"
+
+foreach ($f in @($SourcePs1, $SourceBat, $SourceVersioning, $SourceCheck, $SourceAgents)) {
     if (-not (Test-Path $f)) { Write-Host "[ERROR] нет эталона: $f" -ForegroundColor Red; exit 1 }
 }
 $ethalonText = [System.IO.File]::ReadAllText($SourcePs1)
@@ -44,29 +53,67 @@ if ($ethalonText -notmatch '\$SCRIPT_VERSION\s*=\s*"(\d+\.\d+\.\d+)"') {
     exit 1
 }
 $EthalonVersion = $Matches[1]
-Write-Host "Эталон: release-скрипт v$EthalonVersion ($SourcePs1)"
+Write-Host "Эталон: release-скрипт v$EthalonVersion"
 
-# --- цели -------------------------------------------------------------------
-if (-not $Repos) {
-    if (-not (Test-Path $RegistryPath)) {
-        Write-Host "[ERROR] нет реестра: $RegistryPath (укажите -Repos)" -ForegroundColor Red
+$AgentsBlock = [System.IO.File]::ReadAllText($SourceAgents)
+if ($AgentsBlock -notmatch '<!-- versioning:begin -->' -or $AgentsBlock -notmatch '<!-- versioning:end -->') {
+    Write-Host "[ERROR] в шаблоне блока нет маркеров versioning:begin/end" -ForegroundColor Red
+    exit 1
+}
+
+# --- проекты из versioning.yaml ---------------------------------------------
+function Get-ManifestProjects {
+    if (-not (Test-Path $VersioningPath)) {
+        Write-Host "[ERROR] нет versioning.yaml: $VersioningPath" -ForegroundColor Red
         exit 1
     }
-    $Repos = Select-String -Path $RegistryPath -Pattern "repo:\s*(\S+)" |
-        ForEach-Object { $_.Matches[0].Groups[1].Value }
-    $Repos = @($Repos | Select-Object -Unique)
+    $py = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $py) { Write-Host "[ERROR] python не найден (нужен для чтения YAML)" -ForegroundColor Red; exit 1 }
+    $json = & $py -c "import json,yaml,sys; print(json.dumps(yaml.safe_load(open(sys.argv[1], encoding='utf-8'))))" $VersioningPath 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] versioning.yaml не разобрался: $json" -ForegroundColor Red; exit 1 }
+    $data = $json | ConvertFrom-Json
+    $result = @()
+    foreach ($prop in $data.projects.PSObject.Properties) {
+        $cfg = $prop.Value
+        $result += [pscustomobject]@{
+            Key         = $prop.Name
+            Repo        = $(if ($cfg.repo) { [string]$cfg.repo } else { $null })
+            Path        = $(if ($cfg.path) { [string]$cfg.path } else { $null })
+            Track       = $(if ($cfg.track) { [string]$cfg.track } else { "release" })
+            VersionFile = $(if ($null -ne $cfg.version_file) { [string]$cfg.version_file } else { $null })
+            Changelog   = $(if ($cfg.changelog) { [string]$cfg.changelog } else { "CHANGELOG.md" })
+            HasGit      = $(if ($null -ne $cfg.git) { [bool]$cfg.git } else { $true })
+            Releases    = $(if ($null -ne $cfg.release) { [bool]$cfg.release } else { $true })
+        }
+    }
+    return $result
 }
-if (-not $Repos) { Write-Host "[ERROR] пустой список репозиториев" -ForegroundColor Red; exit 1 }
-Write-Host "Репозиториев: $($Repos.Count) | режим: $(if ($Apply) { 'APPLY (запись)' } else { 'dry-run (только отчёт)' })"
+
+$Projects = @(Get-ManifestProjects)
+if ($Repos) {
+    $Projects = @($Projects | Where-Object {
+        $Repos -contains $_.Key -or ($_.Repo -and $Repos -contains $_.Repo)
+    })
+}
+if (-not $Projects) { Write-Host "[ERROR] пустой список проектов" -ForegroundColor Red; exit 1 }
+
+$ManifestDir = Split-Path -Parent $VersioningPath
+foreach ($p in $Projects) {
+    if ($p.Path) { $p | Add-Member -NotePropertyName LocalDir -NotePropertyValue (Join-Path $ManifestDir $p.Path) }
+    else { $p | Add-Member -NotePropertyName LocalDir -NotePropertyValue $null }
+}
+$mode = if ($Apply -and $LocalOnly) { 'APPLY локально' }
+        elseif ($Apply) { 'APPLY + удалённый канал' }
+        else { 'plan (ничего не пишется)' }
+Write-Host "Проектов: $($Projects.Count) | режим: $mode"
 Write-Host ""
 
+# --- удалённый канал (только release-трек) -----------------------------------
 function Invoke-Gh([string[]]$GhArgs) {
-    # Нативные команды: при EAP=Stop даже подавленный stderr (2>$null) кидает
-    # terminating error — для ожидаемых 404 («файла ещё нет») переключаем EAP.
     $eap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = & $GhCmd @GhArgs 2>$null
+        $out = & $script:GhCmd @GhArgs 2>$null
         return @{ Output = ($out -join "`n"); ExitCode = $LASTEXITCODE }
     } finally {
         $ErrorActionPreference = $eap
@@ -74,7 +121,6 @@ function Invoke-Gh([string[]]$GhArgs) {
 }
 
 function Get-RemoteScriptVersion([string]$Repo) {
-    # возвращает @{ Sha; Version } или $null, если файла нет
     $r = Invoke-Gh @("api", "repos/$Repo/contents/release.ps1")
     if ($r.ExitCode -ne 0 -or -not $r.Output) { return $null }
     $obj = $r.Output | ConvertFrom-Json
@@ -94,52 +140,252 @@ function Set-RemoteFile([string]$Repo, [string]$Path, [string]$LocalPath, [strin
     return ($r.ExitCode -eq 0)
 }
 
-# --- dry-run/apply по каждому репо ------------------------------------------
-$rows = @()
-foreach ($repo in $Repos) {
-    $remote = Get-RemoteScriptVersion $repo
-    $sha = $null; $ver = $null; $state = ""
-    if ($null -eq $remote) {
-        $state = "нет файла"
+# --- локальный канал ---------------------------------------------------------
+function Get-DominantNewline([string]$Text) {
+    if ($Text -match "`r`n") { return "`r`n" }
+    return "`n"
+}
+
+function Update-AgentsBlock([string]$FilePath, [string]$Block) {
+    <# Идемпотентная вставка/обновление блока между маркерами.
+       Всё за пределами региона сохраняется побайтово. Возвращает действие. #>
+    $nl = "`n"
+    if (Test-Path $FilePath) {
+        $text = [System.IO.File]::ReadAllText($FilePath)
+        $nl = Get-DominantNewline $text
     } else {
-        $sha = $remote.Sha; $ver = $remote.Version
-        if ($ver -eq $EthalonVersion) { $state = "ok (уже актуален)" }
-        elseif ($ver) { $state = "устарел: v$ver" }
-        else { $state = "непонятная версия" }
+        $text = ""
     }
+    $beginMark = "<!-- versioning:begin -->"
+    $endMark = "<!-- versioning:end -->"
 
-    if ($Apply -and $state -ne "ok (уже актуален)") {
-        $msg = "chore(release): sync release script v$EthalonVersion"
-        $ps1ok = Set-RemoteFile $repo "release.ps1" $SourcePs1 $sha $msg
-        $batSha = $null
-        $batRemote = Invoke-Gh @("api", "repos/$repo/contents/release.bat")
-        if ($batRemote.ExitCode -eq 0 -and $batRemote.Output) {
-            $batSha = ($batRemote.Output | ConvertFrom-Json).sha
+    if ($text -match [regex]::Escape($beginMark) -and $text -match [regex]::Escape($endMark)) {
+        $beginIdx = $text.IndexOf($beginMark)
+        $endIdx = $text.IndexOf($endMark, $beginIdx)
+        if ($endIdx -lt $beginIdx) { return @{ Action = "ОШИБКА: маркеры вне порядка"; Changed = $false } }
+        $tailIdx = $text.IndexOf("`n", $endIdx)
+        if ($tailIdx -lt 0) { $tailIdx = $text.Length } else { $tailIdx += 1 }
+        $normalizedBlock = ($Block -replace "`r`n", "`n").TrimEnd("`n") + "`n"
+        $inserted = $normalizedBlock -replace "`n", $nl
+        $existing = $text.Substring($beginIdx, $tailIdx - $beginIdx)
+        if ($existing -eq $inserted) {
+            return @{ Action = "ok (блок актуален)"; Changed = $false }
         }
-        $batok = Set-RemoteFile $repo "release.bat" $SourceBat $batSha $msg
-        if ($ps1ok -and $batok) { $state = "обновлён (commit отправлен)" }
-        else { $state = "ОШИБКА записи" }
-        # после записи перечитываем фактическую версию
-        $check = Get-RemoteScriptVersion $repo
-        if ($check) { $ver = $check.Version }
+        $newText = $text.Substring(0, $beginIdx) + $inserted + $text.Substring($tailIdx)
+        return @{ Action = "обновлён блок"; Changed = $true; Text = $newText }
     }
 
-    $rows += [pscustomobject]@{ Repo = $repo; Version = $(if ($ver) { "v$ver" } else { "-" }); Action = $state }
+    if ($text.Trim() -eq "") {
+        $normalizedBlock = ($Block -replace "`r`n", "`n").TrimEnd("`n") + "`n"
+        return @{ Action = "создан AGENTS.md с блоком"; Changed = $true; Text = $normalizedBlock }
+    }
+    $sep = if ($text.EndsWith("`n") -or $text.EndsWith("`r`n")) { "" } else { $nl }
+    $normalizedBlock = ($Block -replace "`r`n", "`n").TrimEnd("`n") + "`n"
+    $newText = $text + $sep + $nl + ($normalizedBlock -replace "`n", $nl)
+    return @{ Action = "дописан блок"; Changed = $true; Text = $newText }
 }
 
-$rows | Format-Table -AutoSize
-
-# --- финальная проверка: все копии одной версии ------------------------------
-$finalVersions = @()
-foreach ($repo in $Repos) {
-    $remote = Get-RemoteScriptVersion $repo
-    $finalVersions += $(if ($remote -and $remote.Version) { $remote.Version } else { "MISSING" })
+function Test-SameFile([string]$Source, [string]$Target) {
+    # Источник и цель могут совпадать (витрина — сама себе проект): копировать
+    # файл на самого себя нельзя.
+    return [System.IO.Path]::GetFullPath($Source) -eq [System.IO.Path]::GetFullPath($Target)
 }
-$unique = @($finalVersions | Select-Object -Unique)
-if ($unique.Count -eq 1 -and $unique[0] -eq $EthalonVersion) {
-    Write-Host "[OK] Все $($Repos.Count) копий release-скрипта: v$EthalonVersion" -ForegroundColor Green
+
+function Test-FileIdentical([string]$Source, [string]$Target) {
+    $a = (Get-FileHash -Algorithm SHA256 -Path $Source).Hash
+    $b = (Get-FileHash -Algorithm SHA256 -Path $Target).Hash
+    return $a -eq $b
+}
+
+function Copy-IfDifferent([string]$Source, [string]$Target) {
+    if (-not (Test-Path $Target)) { return "создан" }
+    if (Test-SameFile $Source $Target) { return "ok (эталон здесь)" }
+    if (Test-FileIdentical $Source $Target) { return "ok" }
+    return "обновлён"
+}
+
+function New-ChangelogSkeleton {
+    return @"
+# Changelog
+
+Формат: Keep a Changelog, уровни — семантическое версионирование.
+Правила ведения: ``docs/versioning.md``.
+
+## [Unreleased]
+
+"@
+}
+
+# --- план и (опционально) запись ---------------------------------------------
+$GhCmd = $null
+if (-not $LocalOnly) {
+    $GhCmd = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if (-not $GhCmd) {
+        $fallback = "C:\Program Files\GitHub CLI\gh.exe"
+        if (Test-Path $fallback) { $GhCmd = $fallback }
+        else { Write-Host "[ERROR] gh не найден (PATH и $fallback)" -ForegroundColor Red; exit 1 }
+    }
+}
+
+$rows = @()
+$accessErrors = @()
+foreach ($p in $Projects) {
+    $local = $p.LocalDir
+    if (-not $local -or -not (Test-Path $local)) {
+        $accessErrors += "$($p.Key): локальная копия не найдена ($local)"
+        $rows += [pscustomobject]@{ Project = $p.Key; Track = $p.Track; Action = "ОШИБКА доступа: нет каталога" }
+        continue
+    }
+
+    $actions = @()
+
+    # 1) эталонные файлы версионирования
+    foreach ($pair in @(
+        @($SourceVersioning, (Join-Path $local "docs\versioning.md")),
+        @($SourceCheck, (Join-Path $local "scripts\check-version.py"))
+    )) {
+        $src = $pair[0]; $dst = $pair[1]
+        $dir = Split-Path -Parent $dst
+        $same = Test-SameFile $src $dst
+        $state = if ($same) { "ok (эталон здесь)" }
+                 elseif (Test-Path $dst) { Copy-IfDifferent $src $dst }
+                 else { "создан" }
+        $actions += "$(Split-Path $dst -Leaf): $state"
+        if ($Apply -and -not $same) {
+            if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            Copy-Item $src $dst -Force
+        }
+    }
+
+    # 2) CHANGELOG: скелет только если файла нет (содержимое не перезаписываем)
+    $clPath = Join-Path $local $p.Changelog
+    if (Test-Path $clPath) {
+        $actions += "$($p.Changelog): ok (есть, не трогаю)"
+    } else {
+        $actions += "$($p.Changelog): создать скелет"
+        if ($Apply) {
+            [System.IO.File]::WriteAllText($clPath, (New-ChangelogSkeleton), (New-Object System.Text.UTF8Encoding($false)))
+        }
+    }
+
+    # 3) блок правил в AGENTS.md (идемпотентно, соседний текст не трогаем)
+    $agentsPath = Join-Path $local "AGENTS.md"
+    $agentsPlan = Update-AgentsBlock $agentsPath $AgentsBlock
+    $actions += "AGENTS.md: $($agentsPlan.Action)"
+    if ($Apply -and $agentsPlan.Changed -and $agentsPlan.Text) {
+        [System.IO.File]::WriteAllText($agentsPath, $agentsPlan.Text, (New-Object System.Text.UTF8Encoding($false)))
+    }
+
+    # 4) release-скрипт: только release-трек; локальный канал + канал удалённый
+    $remoteNote = ""
+    if (-not $p.Releases) {
+        $remoteNote = "static/без релизов: release-скрипт не разносится"
+    } else {
+        foreach ($pair in @(
+            @($SourcePs1, (Join-Path $local "release.ps1")),
+            @($SourceBat, (Join-Path $local "release.bat"))
+        )) {
+            $src = $pair[0]; $dst = $pair[1]
+            $state = if (Test-Path $dst) { Copy-IfDifferent $src $dst } else { "создан" }
+            $actions += "$(Split-Path $dst -Leaf): $state"
+            if ($Apply) { Copy-Item $src $dst -Force }
+        }
+
+        if ($LocalOnly) {
+            $remoteNote = "локальный режим: канал пропущен"
+        } elseif (-not $p.Repo) {
+            $remoteNote = "нет repo: удалённый разнос пропущен"
+        } else {
+            $remote = Get-RemoteScriptVersion $p.Repo
+            if ($null -eq $remote) { $remoteNote = "release.ps1: нет файла" }
+            elseif ($remote.Version -eq $EthalonVersion) { $remoteNote = "release.ps1: ok (v$($remote.Version))" }
+            else { $remoteNote = "release.ps1: устарел v$($remote.Version)" }
+
+            if ($Apply -and $remote -and $remote.Version -ne $EthalonVersion) {
+                $msg = "chore(release): sync release script v$EthalonVersion"
+                $ps1ok = Set-RemoteFile $p.Repo "release.ps1" $SourcePs1 $remote.Sha $msg
+                $batSha = $null
+                $batRemote = Invoke-Gh @("api", "repos/$($p.Repo)/contents/release.bat")
+                if ($batRemote.ExitCode -eq 0 -and $batRemote.Output) { $batSha = ($batRemote.Output | ConvertFrom-Json).sha }
+                $batok = Set-RemoteFile $p.Repo "release.bat" $SourceBat $batSha $msg
+                if ($ps1ok -and $batok) { $remoteNote = "release.ps1: обновлён" }
+                else { $remoteNote = "release.ps1: ОШИБКА записи" }
+            } elseif ($Apply -and -not $remote) {
+                $msg = "chore(release): add release script v$EthalonVersion"
+                $ps1ok = Set-RemoteFile $p.Repo "release.ps1" $SourcePs1 $null $msg
+                $batok = Set-RemoteFile $p.Repo "release.bat" $SourceBat $null $msg
+                if ($ps1ok -and $batok) { $remoteNote = "release.ps1: создан" }
+                else { $remoteNote = "release.ps1: ОШИБКА записи" }
+            }
+        }
+    }
+
+    $rows += [pscustomobject]@{
+        Project = $p.Key
+        Track   = $p.Track
+        Action  = ($actions -join "; ")
+        Remote  = $remoteNote
+    }
+}
+
+$rows | Format-Table -AutoSize -Wrap
+if ($accessErrors) {
+    Write-Host "[ERROR] Ошибки доступа:" -ForegroundColor Red
+    $accessErrors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+}
+
+# --- финальная сверка копий с эталоном (всегда) -------------------------------
+$divergence = @()
+foreach ($p in $Projects) {
+    if (-not $p.LocalDir -or -not (Test-Path $p.LocalDir)) { continue }
+    foreach ($pair in @(
+        @($SourceVersioning, (Join-Path $p.LocalDir "docs\versioning.md")),
+        @($SourceCheck, (Join-Path $p.LocalDir "scripts\check-version.py"))
+    )) {
+        if (-not (Test-Path $pair[1])) { $divergence += "$($p.Key): нет $(Split-Path $pair[1] -Leaf)"; continue }
+        if (-not (Test-FileIdentical $pair[0] $pair[1])) {
+            $divergence += "$($p.Key): $(Split-Path $pair[1] -Leaf) расходится с эталоном"
+        }
+    }
+    $clPath = Join-Path $p.LocalDir $p.Changelog
+    if (-not (Test-Path $clPath)) { $divergence += "$($p.Key): нет $($p.Changelog)" }
+
+    if ($p.Releases) {
+        foreach ($pair in @(
+            @($SourcePs1, (Join-Path $p.LocalDir "release.ps1")),
+            @($SourceBat, (Join-Path $p.LocalDir "release.bat"))
+        )) {
+            if (-not (Test-Path $pair[1])) {
+                $divergence += "$($p.Key): нет $(Split-Path $pair[1] -Leaf)"
+                continue
+            }
+            if (-not (Test-FileIdentical $pair[0] $pair[1])) {
+                $divergence += "$($p.Key): $(Split-Path $pair[1] -Leaf) расходится с эталоном"
+            }
+        }
+    }
+
+    $agentsPath = Join-Path $p.LocalDir "AGENTS.md"
+    if (-not (Test-Path $agentsPath)) {
+        $divergence += "$($p.Key): нет AGENTS.md"
+    } else {
+        $check = Update-AgentsBlock $agentsPath $AgentsBlock
+        if ($check.Action -notlike "ok*") { $divergence += "$($p.Key): блок AGENTS.md '$($check.Action)'" }
+    }
+
+    if ($p.Releases -and $p.Repo -and -not $LocalOnly) {
+        $remote = Get-RemoteScriptVersion $p.Repo
+        $v = if ($remote -and $remote.Version) { $remote.Version } else { "MISSING" }
+        if ($v -ne $EthalonVersion) { $divergence += "$($p.Key): remote release.ps1 = $v" }
+    }
+}
+
+Write-Host ""
+if ($divergence.Count -eq 0 -and -not $accessErrors) {
+    $scope = if ($LocalOnly) { "локальные копии" } else { "все проекты" }
+    Write-Host "[OK] $scope $($Projects.Count) согласованы с эталоном (release-скрипт v$EthalonVersion)" -ForegroundColor Green
     exit 0
-} else {
-    Write-Host "[FAIL] Копии разного версии/отсутствуют: $($unique -join ', ')" -ForegroundColor Red
-    exit 1
 }
+Write-Host "[FAIL] Расхождений: $($divergence.Count)" -ForegroundColor Red
+$divergence | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+exit 1
