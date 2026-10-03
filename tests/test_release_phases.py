@@ -71,6 +71,15 @@ def git(app: Path, *args: str) -> str:
     return proc.stdout.strip("\r\n")
 
 
+def git_dir(repo: Path, *args: str) -> str:
+    """git с --git-dir — чтобы заглянуть в содержимое фикстурного remote."""
+    proc = subprocess.run(
+        ["git", "--git-dir", str(repo), *args], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60,
+    )
+    return (proc.stdout + proc.stderr).strip("\r\n")
+
+
 def write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
@@ -85,8 +94,12 @@ def changelog(unreleased_body: str, version: str = "1.5.2") -> str:
     )
 
 
-def make_fixture(unreleased_body: str, *, dirty: bool = False) -> Path:
-    """Фикстурный проект с удалённым «remote», локальным bin/ и gh-shim."""
+def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = False) -> Path:
+    """Фикстурный проект с удалённым «remote», локальным bin/ и gh-shim.
+
+    gh_ok=True — shim пропускает всё (успешная публикация); по умолчанию
+    публикация рвётся на `gh release create`, чтобы проверить откат.
+    """
     tmp = Path(tempfile.mkdtemp(prefix="rel-phase-"))
     app = tmp / "app"
     app.mkdir()
@@ -97,15 +110,21 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False) -> Path:
     if os.name == "nt":
         shim = bin_dir / "gh.cmd"
         # cmd.exe надёжнее с CRLF, поэтому пишем байты
-        shim.write_bytes(
-            b"@echo off\r\n"
-            b'if "%1"=="auth" exit /b 0\r\n'
-            b"echo gh-shim blocked: %*\r\n"
-            b"exit /b 1\r\n"
-        )
+        if gh_ok:
+            shim.write_bytes(b"@echo off\r\nexit /b 0\r\n")
+        else:
+            shim.write_bytes(
+                b"@echo off\r\n"
+                b'if "%1"=="auth" exit /b 0\r\n'
+                b"echo gh-shim blocked: %*\r\n"
+                b"exit /b 1\r\n"
+            )
     else:
         shim = bin_dir / "gh"
-        write(shim, '#!/bin/sh\nif [ "$1" = "auth" ]; then exit 0; fi\necho "gh-shim blocked: $*" >&2\nexit 1\n')
+        if gh_ok:
+            write(shim, "#!/bin/sh\nexit 0\n")
+        else:
+            write(shim, '#!/bin/sh\nif [ "$1" = "auth" ]; then exit 0; fi\necho "gh-shim blocked: $*" >&2\nexit 1\n')
         shim.chmod(0o755)
 
     shutil.copy(SCRIPT, app / "release.ps1")
@@ -275,6 +294,36 @@ def test_publish_commits_bump_then_rolls_back_failed_tag() -> None:
         cleanup(app)
 
 
+def test_publish_pushes_branch_and_tag_to_remote() -> None:
+    """Успешная публикация: коммит бампа уезжает в remote вместе с тегом.
+
+    Дефект контрольного прогона: скрипт пушил только тег, и ветка на GitHub
+    отставала — у клона version и верх changelog не совпадали с тегом.
+    """
+    app = make_fixture("### Добавлено\n- Публикация уносит ветку в remote.\n", gh_ok=True)
+    try:
+        rc, out = run_release(app, "-Prepare")
+        check("подготовка прошла", rc == 0, out)
+        rc, out = run_release(app)
+        check("публикация прошла", rc == 0, out)
+        check("релиз опубликован", "[OK] Релиз" in out, out)
+
+        branch = git(app, "rev-parse", "--abbrev-ref", "HEAD")
+        remote = app.parent / "github.com" / "zzz-no-such-owner" / "app.git"
+        remote_head = git_dir(remote, "rev-parse", branch)
+        local_head = git(app, "rev-parse", "HEAD")
+        check("коммит бампа ушёл в ветку remote",
+              remote_head == local_head, f"remote={remote_head} local={local_head}")
+
+        remote_tags = git_dir(remote, "tag", "--list")
+        check("тег ушёл в remote", remote_tags == "v1.6.0", remote_tags)
+
+        top = git(app, "log", "-1", "--pretty=%s")
+        check("коммит бампа на вершине", top == "release: 1.6.0 (MINOR)", top)
+    finally:
+        cleanup(app)
+
+
 def main() -> int:
     if SHELL is None:
         print("SKIP: PowerShell/pwsh не найден")
@@ -291,6 +340,7 @@ def main() -> int:
     test_publish_refuses_dirty_files()
     test_publish_refuses_version_desync()
     test_publish_commits_bump_then_rolls_back_failed_tag()
+    test_publish_pushes_branch_and_tag_to_remote()
     print(f"ALL PASS ({PASS} проверок)")
     return 0
 

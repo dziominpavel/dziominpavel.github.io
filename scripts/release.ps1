@@ -27,7 +27,7 @@ param(
     [switch]$Major
 )
 
-$SCRIPT_VERSION = "1.1.0"
+$SCRIPT_VERSION = "1.1.1"
 Write-Host "release.ps1 v$SCRIPT_VERSION"
 
 function Fail([string]$Message) {
@@ -332,6 +332,21 @@ if ($dirty.Count -gt 0) {
     if ($LASTEXITCODE -ne 0) { Fail "Не удалось закоммитить бамп. Релиз не создан." }
     Write-Host "Committed: release: $Version ($level)"
 }
+
+# --- 7b. Пуш ветки: коммит бампа должен уехать на remote ---------------------
+# Тег пушится отдельно (шаг 10); без этого шага ветка на GitHub остаётся
+# позади тега — у клона файл version и верх changelog расходятся с тегом,
+# а следующий релиз пришлось бы начинать с незапушенного бампа.
+$CurrentBranch = & git rev-parse --abbrev-ref HEAD
+$CurrentBranch = "$CurrentBranch".Trim()
+if ($LASTEXITCODE -ne 0 -or $CurrentBranch -eq '' -or $CurrentBranch -eq 'HEAD') {
+    Fail "Не удалось определить текущую ветку (или HEAD отсоединён) — коммит бампа не запушен, тег и релиз НЕ созданы."
+}
+$null = & git push origin $CurrentBranch 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Fail "Не удалось запушить ветку $CurrentBranch с коммитом бампа. Тег и релиз НЕ созданы."
+}
+Write-Host "Pushed: ветка $CurrentBranch"
 
 # --- 8. Тег укажет на коммит с секцией новой версии ------------------------
 $null = & git show ("HEAD:CHANGELOG.md") 2>&1 | Out-Null
