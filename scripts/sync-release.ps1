@@ -191,10 +191,25 @@ function Test-SameFile([string]$Source, [string]$Target) {
     return [System.IO.Path]::GetFullPath($Source) -eq [System.IO.Path]::GetFullPath($Target)
 }
 
+function Get-NormalizedHash([string]$Path) {
+    # Сравнение без учёта перевода строк: у детей core.autocrlf=true, поэтому
+    # после checkout/clone те же байты лежат в CRLF, а эталон хранится в LF.
+    # 28591 (Latin-1) переводит байты в символы и обратно один-в-один,
+    # поэтому содержимое сравнивается байт-в-байт, минуя только CR.
+    $latin = [Text.Encoding]::GetEncoding(28591)
+    $text = $latin.GetString([IO.File]::ReadAllBytes($Path)).Replace("`r", "")
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($latin.GetBytes($text))).Replace('-', '')
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 function Test-FileIdentical([string]$Source, [string]$Target) {
-    $a = (Get-FileHash -Algorithm SHA256 -Path $Source).Hash
-    $b = (Get-FileHash -Algorithm SHA256 -Path $Target).Hash
-    return $a -eq $b
+    # Сырые хэши не годятся: CRLF в дочерней копии давал ложное «расходится».
+    if ((Get-NormalizedHash $Source) -ne (Get-NormalizedHash $Target)) { return $false }
+    return $true
 }
 
 function Copy-IfDifferent([string]$Source, [string]$Target) {
@@ -202,6 +217,26 @@ function Copy-IfDifferent([string]$Source, [string]$Target) {
     if (Test-SameFile $Source $Target) { return "ok (эталон здесь)" }
     if (Test-FileIdentical $Source $Target) { return "ok" }
     return "обновлён"
+}
+
+function Copy-PreservingEol([string]$Source, [string]$Target) {
+    # Переводы строк цели сохраняем: у детей core.autocrlf=true, и запись LF
+    # поверх CRLF даёт git-статус «M» при равном содержимом — дерево выглядит
+    # грязным, а release.ps1, требующий чистого дерева, отказывается готовить
+    # релиз. Цель ещё не существует — копируем байты эталона как есть.
+    $bytes = [IO.File]::ReadAllBytes($Source)
+    if (Test-Path $Target) {
+        # Имя строго другой регистр: PowerShell-переменные регистронезависимы,
+        # $target перезаписал бы строковый параметр $Target байтовым массивом.
+        $existing = [IO.File]::ReadAllBytes($Target)
+        if ($existing -contains 13) {
+            $latin = [Text.Encoding]::GetEncoding(28591)
+            $text = $latin.GetString($bytes).Replace("`r`n", "`n").Replace("`n", "`r`n")
+            $bytes = $latin.GetBytes($text)
+        }
+    }
+    [IO.File]::WriteAllBytes($Target, $bytes)
+    (Get-Item $Target).LastWriteTime = (Get-Item $Source).LastWriteTime
 }
 
 function New-ChangelogSkeleton {
@@ -251,9 +286,9 @@ foreach ($p in $Projects) {
                  elseif (Test-Path $dst) { Copy-IfDifferent $src $dst }
                  else { "создан" }
         $actions += "$(Split-Path $dst -Leaf): $state"
-        if ($Apply -and -not $same) {
+        if ($Apply -and ($state -eq "создан" -or $state -eq "обновлён")) {
             if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-            Copy-Item $src $dst -Force
+            Copy-PreservingEol $src $dst
         }
     }
 
@@ -288,7 +323,7 @@ foreach ($p in $Projects) {
             $src = $pair[0]; $dst = $pair[1]
             $state = if (Test-Path $dst) { Copy-IfDifferent $src $dst } else { "создан" }
             $actions += "$(Split-Path $dst -Leaf): $state"
-            if ($Apply) { Copy-Item $src $dst -Force }
+            if ($Apply -and ($state -eq "создан" -or $state -eq "обновлён")) { Copy-PreservingEol $src $dst }
         }
 
         if ($LocalOnly) {
