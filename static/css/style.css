@@ -582,6 +582,13 @@ p { margin: 0 0 var(--sp-3); }
 .grid .web-card:nth-child(8) { animation-delay: 315ms; }
 .grid .web-card:nth-child(9) { animation-delay: 360ms; }
 
+/* Стаггер — только при первой загрузке: filter.js через ~800 мс вешает
+ * .no-anim на <html>. Без этого повторные показы карточек после клика по
+ * фильтру перезапускали бы card-in со своим nth-child delay, и web-карточки
+ * (позиции 8–9, задержка 315/360 мс) отставали бы от остальных. */
+html.no-anim .card,
+html.no-anim .web-card { animation: none; }
+
 .web-card:hover,
 .web-card:focus-within {
   transform: translateY(-4px);
