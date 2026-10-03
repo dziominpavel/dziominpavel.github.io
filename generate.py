@@ -488,11 +488,12 @@ def card_html(card: dict) -> str:
         {app_icon_html(card, 'card-icon', '64')}
         <span class="card-title">
           <span class="card-name">{esc(store['name'])}</span>
-          <span class="card-meta">v{esc(card['version'])} · {fmt_size(card['size'])}</span>
+          <span class="card-meta">v{esc(card['version'])} · {fmt_size(card['size'])} · обновлено {fmt_date(card['date'])}</span>
         </span>
       </a>"""
-    stats = (f'<span>Скачиваний: {card["downloads"]:,}</span>'
-             f'<span aria-hidden="true">·</span><span>{fmt_date(card["date"])}</span>')
+    # Дата уже стоит рядом с версией (с подписью), поэтому в строке счётчиков
+    # остаётся только счётчик — без второй, не подписанной даты.
+    stats = f'<span>Скачиваний: {card["downloads"]:,}</span>'
     actions = f"""{buttons_html(card)}
         <a class="icon-btn" href="{repo_url}" rel="noopener"
            aria-label="Исходники {esc(store['name'])} на GitHub"
@@ -709,11 +710,26 @@ def write_page(path: str, markup: str) -> None:
         fh.write(markup)
 
 
+def sort_by_date(cards: list[dict]) -> list[dict]:
+    """Порядок витрины: от самой свежей даты к старой, независимо от реестра.
+
+    Скачиваемые — по дате публикации релиза (published_at), web-карточки — по
+    их дате обновления данных. Обе даты ISO-8601, поэтому достаточно
+    лексикографики; карточки без даты уходят в конец. Возвращает новый список.
+    """
+    return sorted(cards, key=lambda c: c.get("date") or "", reverse=True)
+
+
 def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[str]:
     """Генерирует главную, страницы приложений, «О проекте», favicon, sitemap.
 
     Возвращает список относительных путей всех страниц (для sitemap).
     """
+    # Сетка главной отсортирована по дате (новое сверху); порядок registry.yaml
+    # задаёт только состав каталога, а не его порядок. Группы не смешиваются:
+    # web-карточки идут после скачиваемых (store-catalog).
+    cards = sort_by_date(cards)
+    web_cards = sort_by_date(web_cards)
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -844,7 +860,8 @@ def main(argv: list[str] | None = None) -> int:
     web_entries = load_web_registry()
     workdir = tempfile.mkdtemp(prefix="store-build-")
     try:
-        cards = collect_projects(entries, token, workdir=workdir)
+        # Порядок вывода и --json = порядок витрины (см. sort_by_date).
+        cards = sort_by_date(collect_projects(entries, token, workdir=workdir))
 
         if args.json:
             slim = [{k: v for k, v in card.items()
@@ -856,7 +873,7 @@ def main(argv: list[str] | None = None) -> int:
             print()
             return 0
 
-        web_cards = collect_web_projects(web_entries, token, workdir=workdir)
+        web_cards = sort_by_date(collect_web_projects(web_entries, token, workdir=workdir))
         pages = render_site(cards, web_cards, args.out)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -24,6 +25,7 @@ from generate import (  # noqa: E402
     load_web_registry,
     release_card,
     render_site,
+    sort_by_date,
     validate_project,
 )
 
@@ -340,6 +342,80 @@ def test_web_publish_broken_source():
     print("ok: битый web-источник -> skip + warning, без исключений")
 
 
+def test_sort_by_date_desc():
+    """Порядок витрины: от свежей даты к старой, без даты — в конец."""
+    cards = [
+        {"slug": "old", "date": "2026-01-01T10:00:00Z"},
+        {"slug": "new", "date": "2026-05-01T10:00:00Z"},
+        {"slug": "mid", "date": "2026-03-01T10:00:00Z"},
+        {"slug": "none", "date": None},
+        {"slug": "bare", "date": "2026-04-01"},  # календарная дата без таймзоны
+    ]
+    ordered = sort_by_date(cards)
+    assert [c["slug"] for c in ordered] == ["new", "bare", "mid", "old", "none"], ordered
+    # исходный список не мутируется (render_site вызывается повторно)
+    assert [c["slug"] for c in cards] == ["old", "new", "mid", "none", "bare"]
+    print("ok: sort_by_date — по убыванию даты, без даты в конец, без мутаций")
+
+
+def _fake_release_card(slug: str, date, project_dir: str) -> dict:
+    """Минимальная карточка скачиваемого приложения для рендера в песочнице."""
+    return {
+        "slug": slug, "repo": f"demo/{slug}", "version": "1.0.0", "size": 1000,
+        "date": date, "downloads": 0, "url": "https://example.com/rel",
+        "assets": [{"name": f"{slug}.zip", "size": 1000, "download_count": 0,
+                    "browser_download_url": "https://example.com/x.zip"}],
+        "store": {"name": slug.capitalize(), "description": "Описание приложения."},
+        "icon_missing": False, "screenshots": [], "project_dir": project_dir,
+        "platforms": {"windows": [{"name": f"{slug}.zip", "size": 1000,
+                                   "browser_download_url": "https://example.com/x.zip"}]},
+    }
+
+
+def _fake_web_card(slug: str, date, project_dir: str) -> dict:
+    web_dir = os.path.join(project_dir, f"web-{slug}")
+    os.makedirs(web_dir, exist_ok=True)
+    with open(os.path.join(web_dir, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write("<!DOCTYPE html>\n<html lang=\"ru\"><title>X</title></html>\n")
+    return {"slug": slug, "repo": f"demo/{slug}", "title": slug.capitalize(),
+            "description": "Описание веб-приложения.", "date": date,
+            "icon": None, "data_file": None, "project_dir": project_dir,
+            "web_dir": web_dir}
+
+
+def test_render_home_sorted_by_date():
+    """Главная: скачиваемые по дате релиза (новое сверху), web — после них."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        cards = [
+            _fake_release_card("alpha", "2026-01-01T10:00:00Z", tmp),
+            _fake_release_card("beta", "2026-05-01T10:00:00Z", tmp),
+            _fake_release_card("gamma", "2026-03-01T10:00:00Z", tmp),
+            _fake_release_card("undated", None, tmp),
+        ]
+        web_cards = [
+            _fake_web_card("web-old", "2026-01-02", tmp),
+            _fake_web_card("web-new", "2026-04-01", tmp),
+        ]
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site(cards, web_cards, out)
+        finally:
+            os.chdir(cwd)
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        order = re.findall(r'class="card-head" href="([^"]+)/"', home)
+        assert order == ["beta", "gamma", "alpha", "undated",
+                         "apps/web-new", "apps/web-old"], order
+        # дата подписана и стоит рядом с версией; в строке счётчиков — только счётчик
+        assert "· обновлено 01.05.2026" in home, home
+        assert "<span>Скачиваний: 0</span>" in home, home
+        assert home.count("01.05.2026") == 1, "дата дублируется в строке счётчиков"
+    print("ok: главная отсортирована по дате — новое сверху, web после скачиваемых")
+
+
 if __name__ == "__main__":
     test_validate_ok()
     test_validate_broken_no_crash()
@@ -348,4 +424,6 @@ if __name__ == "__main__":
     test_release_card_json()
     test_web_registry_and_publish_success()
     test_web_publish_broken_source()
+    test_sort_by_date_desc()
+    test_render_home_sorted_by_date()
     print("ALL PASS")
