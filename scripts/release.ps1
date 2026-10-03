@@ -70,7 +70,9 @@ function Read-Changelog {
     }
     $text = [System.IO.File]::ReadAllText($ChangelogPath)
     $newline = if ($text -match "`r`n") { "`r`n" } else { "`n" }
-    $lines = $text -split "\r?\n", -1
+    # 0 = «вернуть все подстроки». Брать -1 нельзя: в PowerShell 7 это значит
+    # «1 подстрока, считая от конца», файл не разбивается вовсе (about_Split).
+    $lines = $text -split "\r?\n", 0
 
     $start = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -207,7 +209,8 @@ if ($Prepare) {
         $checkVersion = ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($VersionFilePath))).Trim()
         if ($checkVersion -notmatch $SemVerPattern) { $problem = "version вне формата: $checkVersion" }
         $checkText = [System.IO.File]::ReadAllText($ChangelogPath)
-        $checkLines = $checkText -split "\r?\n", -1
+        # 0 = «вернуть все подстроки» — как в Read-Changelog, см. комментарий там.
+        $checkLines = $checkText -split "\r?\n", 0
         $checkHead = $null
         foreach ($line in $checkLines) {
             if ($line -match '^## \[?(\d+\.\d+\.\d+)\]?') { $checkHead = $Matches[1]; break }
