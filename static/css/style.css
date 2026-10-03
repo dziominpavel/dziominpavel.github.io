@@ -559,26 +559,12 @@ p { margin: 0 0 var(--sp-3); }
   overflow: hidden;
 }
 
-/* --- блок «Веб-приложения» на главной ------------------------------------- */
+/* --- web-карточки в общей сетке ------------------------------------------- */
 
-/* Отдельные классы (не .card): filter.js не трогает web-карточки поштучно —
- * он скрывает/показывает секцию .web-apps целиком (сегмент «Веб»/«Все»).
- * Сетка и макет карточки консистентны с .grid/.card: те же 3 колонки,
- * те же строки head → chips → desc → stats → actions. */
-.web-grid {
-  display: grid;
-  gap: var(--sp-4);
-  grid-template-columns: 1fr;
-}
-
-@media (min-width: 640px) {
-  .web-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (min-width: 1024px) {
-  .web-grid { grid-template-columns: repeat(3, 1fr); }
-}
-
+/* Живут в той же .grid сразу после скачиваемых, но имеют свой класс
+ * (не .card): filter.js показывает их в сегментах «Все»/«Web» и прячет
+ * под Android/Windows. Макет консистентен с .card: те же строки
+ * head → chips → desc → stats → actions, те же размеры и отступы. */
 .web-card {
   display: flex;
   flex-direction: column;
@@ -593,8 +579,8 @@ p { margin: 0 0 var(--sp-3); }
   animation: card-in 380ms var(--ease) backwards;
 }
 
-.web-grid .web-card:nth-child(1) { animation-delay: 0ms; }
-.web-grid .web-card:nth-child(2) { animation-delay: 45ms; }
+.grid .web-card:nth-child(8) { animation-delay: 315ms; }
+.grid .web-card:nth-child(9) { animation-delay: 360ms; }
 
 .web-card:hover,
 .web-card:focus-within {

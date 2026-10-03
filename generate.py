@@ -500,7 +500,8 @@ def web_card_html(web_card: dict) -> str:
     """Карточка веб-приложения (store-web-apps: без версии, размера и счётчика).
 
     Макет консистентен с .card: head (иконка+название) → chips → описание →
-    строка статистики (дата обновления) → действия; head ссылается на страницу."""
+    строка статистики (дата обновления) → действия; head ссылается на страницу.
+    Карточка рендерится в общей сетке .grid после скачиваемых приложений."""
     url = esc(f'apps/{web_card["slug"]}/')
     repo_url = esc(f"https://github.com/{web_card['repo']}")
     return f"""      <article class="web-card">
@@ -510,7 +511,7 @@ def web_card_html(web_card: dict) -> str:
             <span class="card-name">{esc(web_card['title'])}</span>
           </span>
         </a>
-        <div class="chips"><span class="chip chip-web">Веб</span></div>
+        <div class="chips"><span class="chip chip-web">Web</span></div>
         <p class="card-desc">{esc(web_card['description'])}</p>
         <p class="card-stats"><span>Обновлено {fmt_date(web_card['date'])}</span></p>
         <div class="card-actions">
@@ -520,24 +521,6 @@ def web_card_html(web_card: dict) -> str:
              title="Исходники на GitHub">{SOURCES_SVG}</a>
         </div>
       </article>"""
-
-
-def web_section_html(web_cards: list[dict]) -> str:
-    """Блок «Веб-приложения» на главной: после сетки скачиваемых.
-
-    Секция управляется filter.js целиком: под Android/Windows скрывается,
-    под «Все» и «Веб» видна; отдельные web-карточки (класс web-card)
-    фильтр поштучно не трогает."""
-    if not web_cards:
-        return ""
-    cards = "\n".join(web_card_html(web_card) for web_card in web_cards)
-    return f"""
-    <section class="web-apps" aria-labelledby="web-apps-title">
-      <h2 id="web-apps-title">Веб-приложения</h2>
-      <div class="web-grid">
-{cards}
-      </div>
-    </section>"""
 
 
 def gallery_html(card: dict) -> str:
@@ -723,22 +706,25 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
     pages: list[str] = [""]
 
     # --- главная -----------------------------------------------------------
-    cards_html = "\n".join(card_html(card) for card in cards) or \
+    # Единая сетка: сначала скачиваемые приложения, затем web-карточки —
+    # одним потоком, без отдельной секции.
+    parts = [card_html(card) for card in cards]
+    parts += [web_card_html(web_card) for web_card in web_cards]
+    cards_html = "\n".join(parts) or \
         "    <p class=\"empty\">Пока нет опубликованных приложений.</p>"
     total = len(cards)
     n_android = sum(1 for c in cards if "android" in c["platforms"])
     n_windows = sum(1 for c in cards if "windows" in c["platforms"])
-    # Сегмент «Веб»: отдельный пункт фильтра для web-карточек (секция
-    # .web-apps скрывается под Android/Windows, видна под «Все» и «Веб»).
+    # Сегмент Web: отдельный пункт фильтра для web-карточек (они видны
+    # под «Все»/«Web» и скрыты под Android/Windows).
     web_filter = (
         '\n      <button class="filter" type="button" data-filter="web">'
-        f'Веб <span class="filter-count">{len(web_cards)}</span></button>'
+        f'Web <span class="filter-count">{len(web_cards)}</span></button>'
         if web_cards else "")
     index = INDEX_TEMPLATE.format(cards=cards_html, total=total, android=n_android,
                                   windows=n_windows, total_word=plural_apps(total),
                                   all_count=total + len(web_cards),
                                   web_filter=web_filter)
-    index += web_section_html(web_cards)  # блок «Веб-приложения» — после сетки
     write_page(os.path.join(out_dir, "index.html"),
                render_page(title="Мои приложения — каталог для скачивания",
                            description="Каталог готовых приложений: версии, размеры и кнопки "

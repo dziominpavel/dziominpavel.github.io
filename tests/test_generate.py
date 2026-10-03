@@ -265,13 +265,13 @@ def test_web_registry_and_publish_success():
         assert os.path.isfile(os.path.join(out, "apps", "demo-web", "index.json"))
         with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
             home = fh.read()
-        assert "Веб-приложения" in home
-        assert 'data-filter="web"' in home  # сегмент «Веб» в фильтре главной
+        assert 'data-filter="web"' in home  # сегмент Web в фильтре главной
         assert 'href="apps/demo-web/"' in home
         assert "Открыть в браузере" in home
         assert "Обновлено 15.01.2026" in home
-        assert 'class="web-card"' in home and 'class="card"' not in home.split(
-            "Веб-приложения")[1]
+        assert 'class="web-card"' in home  # в общей сетке, своим классом
+        assert 'chip chip-web">Web</span>' in home  # чип и сегмент — латиницей
+        assert "Веб-приложения" not in home  # отдельной секции больше нет
         with open(os.path.join(out, "sitemap.xml"), encoding="utf-8") as fh:
             sitemap = fh.read()
         assert f"<loc>{SITE_URL}/apps/demo-web/</loc>" in sitemap
