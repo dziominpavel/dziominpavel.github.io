@@ -23,7 +23,7 @@ web:
   benchmark:
     repo: dziominpavel/Benchmark
     title: Benchmark
-    description: "ELO-рейтинг языковых моделей: таблица лидеров, динамика рейтингов и лента прогонов — прямо в браузере."
+    description: "ELO-рейтинг языковых моделей под мои задачи: качество определяется на примере приложения VoiceMind (задача T-001 — поиск багов). Таблица лидеров, динамика рейтингов и лента прогонов — в браузере."
     data: data/index.json  # копируется рядом со страницей; дата карточки — из updated
   instagram-tracker:
     repo: dziominpavel/InstagramTracker

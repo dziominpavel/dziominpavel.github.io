@@ -519,8 +519,11 @@ def web_card_html(web_card: dict) -> str:
 
 
 def web_section_html(web_cards: list[dict]) -> str:
-    """Блок «Веб-приложения» на главной: после сетки, вне зоны filter.js
-    (у карточек класс web-card, а не card — фильтр их не трогает)."""
+    """Блок «Веб-приложения» на главной: после сетки скачиваемых.
+
+    Секция управляется filter.js целиком: под Android/Windows скрывается,
+    под «Все» и «Веб» видна; отдельные web-карточки (класс web-card)
+    фильтр поштучно не трогает."""
     if not web_cards:
         return ""
     cards = "\n".join(web_card_html(web_card) for web_card in web_cards)
@@ -618,10 +621,10 @@ INDEX_TEMPLATE = """    <section class="hero">
         <li><strong class="stat-num">{windows}</strong><span class="stat-label">Windows</span></li>
       </ul>
     </section>
-    <div class="filters" role="group" aria-label="Фильтр по платформе">
-      <button class="filter is-active" type="button" data-filter="all">Все <span class="filter-count">{total}</span></button>
+    <div class="filters" role="group" aria-label="Фильтр каталога">
+      <button class="filter is-active" type="button" data-filter="all">Все <span class="filter-count">{all_count}</span></button>
       <button class="filter" type="button" data-filter="android">Android <span class="filter-count">{android}</span></button>
-      <button class="filter" type="button" data-filter="windows">Windows <span class="filter-count">{windows}</span></button>
+      <button class="filter" type="button" data-filter="windows">Windows <span class="filter-count">{windows}</span></button>{web_filter}
     </div>
     <div class="grid">
 {cards}
@@ -721,8 +724,16 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
     total = len(cards)
     n_android = sum(1 for c in cards if "android" in c["platforms"])
     n_windows = sum(1 for c in cards if "windows" in c["platforms"])
+    # Сегмент «Веб»: отдельный пункт фильтра для web-карточек (секция
+    # .web-apps скрывается под Android/Windows, видна под «Все» и «Веб»).
+    web_filter = (
+        '\n      <button class="filter" type="button" data-filter="web">'
+        f'Веб <span class="filter-count">{len(web_cards)}</span></button>'
+        if web_cards else "")
     index = INDEX_TEMPLATE.format(cards=cards_html, total=total, android=n_android,
-                                  windows=n_windows, total_word=plural_apps(total))
+                                  windows=n_windows, total_word=plural_apps(total),
+                                  all_count=total + len(web_cards),
+                                  web_filter=web_filter)
     index += web_section_html(web_cards)  # блок «Веб-приложения» — после сетки
     write_page(os.path.join(out_dir, "index.html"),
                render_page(title="Мои приложения — каталог для скачивания",
