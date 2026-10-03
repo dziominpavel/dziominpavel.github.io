@@ -27,7 +27,7 @@ param(
     [switch]$Major
 )
 
-$SCRIPT_VERSION = "1.1.1"
+$SCRIPT_VERSION = "1.1.2"
 Write-Host "release.ps1 v$SCRIPT_VERSION"
 
 function Fail([string]$Message) {
