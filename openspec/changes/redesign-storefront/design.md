@@ -65,7 +65,7 @@
 
 ### D5. Анимации — только CSS, progressive enhancement
 
-Появление карточек — CSS `animation` со стаггером через `nth-child` (без JS и IntersectionObserver: контент виден сразу, анимация — усиление). Все переходы — `var(--dur)`/`var(--ease)`. Один общий выключатель:
+Появление карточек — CSS `animation`, единая для всех карточек и одновременная (без JS и IntersectionObserver: контент виден сразу, анимация — усиление). Индивидуальные задержки `nth-child` сняты как источник видимой разницы скоростей появления. Все переходы — `var(--dur)`/`var(--ease)`. Один общий выключатель:
 
 ```css
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

@@ -468,16 +468,6 @@ p { margin: 0 0 var(--sp-3); }
   to { opacity: 1; transform: none; }
 }
 
-.grid .card:nth-child(1) { animation-delay: 0ms; }
-.grid .card:nth-child(2) { animation-delay: 45ms; }
-.grid .card:nth-child(3) { animation-delay: 90ms; }
-.grid .card:nth-child(4) { animation-delay: 135ms; }
-.grid .card:nth-child(5) { animation-delay: 180ms; }
-.grid .card:nth-child(6) { animation-delay: 225ms; }
-.grid .card:nth-child(7) { animation-delay: 270ms; }
-.grid .card:nth-child(8) { animation-delay: 315ms; }
-.grid .card:nth-child(9) { animation-delay: 360ms; }
-
 .card:hover,
 .card:focus-within {
   transform: translateY(-4px);
@@ -559,42 +549,17 @@ p { margin: 0 0 var(--sp-3); }
   overflow: hidden;
 }
 
-/* --- web-карточки в общей сетке ------------------------------------------- */
+/* --- входная анимация ------------------------------------------------------ */
 
-/* Живут в той же .grid сразу после скачиваемых, но имеют свой класс
- * (не .card): filter.js показывает их в сегментах «Все»/«Web» и прячет
- * под Android/Windows. Макет консистентен с .card: те же строки
- * head → chips → desc → stats → actions, те же размеры и отступы. */
-.web-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: var(--sp-5);
-  transition: transform var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-  animation: card-in 380ms var(--ease) backwards;
-}
-
-.grid .web-card:nth-child(8) { animation-delay: 315ms; }
-.grid .web-card:nth-child(9) { animation-delay: 360ms; }
-
-/* Стаггер — только при первой загрузке: filter.js через ~800 мс вешает
- * .no-anim на <html>. Без этого повторные показы карточек после клика по
- * фильтру перезапускали бы card-in со своим nth-child delay, и web-карточки
- * (позиции 8–9, задержка 315/360 мс) отставали бы от остальных. */
-html.no-anim .card,
-html.no-anim .web-card { animation: none; }
-
-.web-card:hover,
-.web-card:focus-within {
-  transform: translateY(-4px);
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-2);
-}
+/* Web-карточка — не отдельный класс: это тот же .card с data-platforms="web"
+ * (один CSS-компонент, один hover, одна анимация; разметка — _card_article
+ * в generate.py, фильтр — единое правило по data-platforms в filter.js).
+ *
+ * Появление при загрузке — единое и одновременное: индивидуальные nth-child
+ * задержки сняты, они делали скорость появления разных карточек разной и
+ * бросались в глаза. При первом клике по фильтру filter.js вешает .no-anim —
+ * дальше любые переключения показывают карточки мгновенно. */
+html.no-anim .card { animation: none; }
 
 /* буквенные заглушки вместо иконки */
 

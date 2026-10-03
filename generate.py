@@ -458,33 +458,48 @@ def buttons_html(card: dict, *, big: bool = False) -> str:
     return "\n".join(out)
 
 
+def _card_article(*, platforms: str, head: str, chips: str, desc: str,
+                  stats: str, actions: str) -> str:
+    """Единый скелет карточки каталога: head → chips → desc → stats → actions.
+
+    Один билдер и для скачиваемых (card_html), и для web (web_card_html):
+    обе карточки — один класс .card, различие только в data-platforms и
+    контенте слотов. Структура строк задана здесь, в одном месте —
+    расхождения компонента исключены."""
+    return f"""    <article class="card" data-platforms="{esc(platforms)}">
+      {head}
+      <div class="chips">{chips}</div>
+      <p class="card-desc">{esc(desc)}</p>
+      <p class="card-stats">{stats}</p>
+      <div class="card-actions">
+        {actions}
+      </div>
+    </article>"""
+
+
 def card_html(card: dict) -> str:
     store = card["store"]
-    platforms = " ".join(card["platforms"])
     chips = "".join(
         f'<span class="chip chip-{p}">{esc(PLATFORM_TITLES[p])}</span>'
         for p in card["platforms"]
     )
     repo_url = esc(f"https://github.com/{card['repo']}")
-    return f"""    <article class="card" data-platforms="{esc(platforms)}">
-      <a class="card-head" href="{esc(card['slug'])}/">
+    head = f"""<a class="card-head" href="{esc(card['slug'])}/">
         {app_icon_html(card, 'card-icon', '64')}
         <span class="card-title">
           <span class="card-name">{esc(store['name'])}</span>
           <span class="card-meta">v{esc(card['version'])} · {fmt_size(card['size'])}</span>
         </span>
-      </a>
-      <div class="chips">{chips}</div>
-      <p class="card-desc">{esc(store['description'])}</p>
-      <p class="card-stats"><span>Скачиваний: {card['downloads']:,}</span>
-        <span aria-hidden="true">·</span><span>{fmt_date(card['date'])}</span></p>
-      <div class="card-actions">
-        {buttons_html(card)}
+      </a>"""
+    stats = (f'<span>Скачиваний: {card["downloads"]:,}</span>'
+             f'<span aria-hidden="true">·</span><span>{fmt_date(card["date"])}</span>')
+    actions = f"""{buttons_html(card)}
         <a class="icon-btn" href="{repo_url}" rel="noopener"
            aria-label="Исходники {esc(store['name'])} на GitHub"
-           title="Исходники на GitHub">{SOURCES_SVG}</a>
-      </div>
-    </article>"""
+           title="Исходники на GitHub">{SOURCES_SVG}</a>"""
+    return _card_article(platforms=" ".join(card["platforms"]), head=head,
+                         chips=chips, desc=store["description"], stats=stats,
+                         actions=actions)
 
 
 def web_icon_html(web_card: dict) -> str:
@@ -499,28 +514,27 @@ def web_icon_html(web_card: dict) -> str:
 def web_card_html(web_card: dict) -> str:
     """Карточка веб-приложения (store-web-apps: без версии, размера и счётчика).
 
-    Макет консистентен с .card: head (иконка+название) → chips → описание →
-    строка статистики (дата обновления) → действия; head ссылается на страницу.
-    Карточка рендерится в общей сетке .grid после скачиваемых приложений."""
+    Тот же компонент .card (скелет — _card_article): head → chips → описание →
+    «Обновлено» → действия; отличия — только контент и data-platforms="web"
+    (маркер сегмента для фильтра главной). Рендерится в общей сетке после
+    скачиваемых приложений."""
     url = esc(f'apps/{web_card["slug"]}/')
     repo_url = esc(f"https://github.com/{web_card['repo']}")
-    return f"""      <article class="web-card">
-        <a class="card-head" href="{url}">
-          {web_icon_html(web_card)}
-          <span class="card-title">
-            <span class="card-name">{esc(web_card['title'])}</span>
-          </span>
-        </a>
-        <div class="chips"><span class="chip chip-web">Web</span></div>
-        <p class="card-desc">{esc(web_card['description'])}</p>
-        <p class="card-stats"><span>Обновлено {fmt_date(web_card['date'])}</span></p>
-        <div class="card-actions">
-          <a class="btn btn-primary" href="{url}">Открыть в браузере</a>
-          <a class="icon-btn" href="{repo_url}" rel="noopener"
-             aria-label="Исходники {esc(web_card['title'])} на GitHub"
-             title="Исходники на GitHub">{SOURCES_SVG}</a>
-        </div>
-      </article>"""
+    head = f"""<a class="card-head" href="{url}">
+        {web_icon_html(web_card)}
+        <span class="card-title">
+          <span class="card-name">{esc(web_card['title'])}</span>
+        </span>
+      </a>"""
+    stats = f'<span>Обновлено {fmt_date(web_card["date"])}</span>'
+    actions = f"""<a class="btn btn-primary" href="{url}">Открыть в браузере</a>
+        <a class="icon-btn" href="{repo_url}" rel="noopener"
+           aria-label="Исходники {esc(web_card['title'])} на GitHub"
+           title="Исходники на GitHub">{SOURCES_SVG}</a>"""
+    return _card_article(platforms="web", head=head,
+                         chips='<span class="chip chip-web">Web</span>',
+                         desc=web_card["description"], stats=stats,
+                         actions=actions)
 
 
 def gallery_html(card: dict) -> str:

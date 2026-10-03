@@ -269,7 +269,8 @@ def test_web_registry_and_publish_success():
         assert 'href="apps/demo-web/"' in home
         assert "Открыть в браузере" in home
         assert "Обновлено 15.01.2026" in home
-        assert 'class="web-card"' in home  # в общей сетке, своим классом
+        assert '<article class="card" data-platforms="web"' in home  # тот же .card
+        assert 'class="web-card"' not in home  # отдельного класса больше нет
         assert 'chip chip-web">Web</span>' in home  # чип и сегмент — латиницей
         assert "Веб-приложения" not in home  # отдельной секции больше нет
         with open(os.path.join(out, "sitemap.xml"), encoding="utf-8") as fh:
