@@ -1,0 +1,108 @@
+# Перечень проектов владельца и трек версионирования каждого.
+# Единственный файл, где корень знает всех детей. Дети этот файл не получают
+# и содержимого других записей не знают (см. docs/versioning.md).
+#
+# Поля:
+#   repo          — GitHub-репозиторий owner/name (для разноса через gh API)
+#   path          — локальная копия относительно корня репозитория (для
+#                   check-version.py из корня); отсутствует, если не нужна
+#   track         — release: версия растёт только на релизе
+#                   static:  версия заморожена, changelog обязателен
+#   version_file  — файл-источник версии; null, если версия не хранится
+#   changelog     — файл changelog (всегда CHANGELOG.md, обязателен)
+#   git           — false, если проект не в git (бамп и теги невозможны)
+#   release       — false, если release-скрипт проекту не разносится
+
+projects:
+  fogmap:
+    repo: dziominpavel/FogMap
+    path: ../FogMap
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  charge-forecast:
+    repo: dziominpavel/ChargeForecast
+    path: ../ChargeForecast
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  gym-progress:
+    repo: dziominpavel/GymProgress
+    path: ../GymProgress
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  voice-mind:
+    repo: dziominpavel/VoiceMind
+    path: ../VoiceMind
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  wishlot:
+    repo: dziominpavel/Wishlot
+    path: ../Wishlot
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  yandex-music-downloader:
+    repo: dziominpavel/YandexMusicDownloader
+    path: ../YandexMusicDownloader
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  instagram-tracker:
+    repo: dziominpavel/InstagramTracker
+    path: ../instagram-tracker
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
+  # Нет ассетов в dist/ и нет GitHub Releases — бамп по команде владельца
+  # «выпусти версию», release-скрипт не разносится (см. design D3).
+  hours-bridge:
+    repo: dziominpavel/hours-bridge
+    path: ../hours-bridge
+    track: release
+    version_file: VERSION
+    changelog: CHANGELOG.md
+    release: false
+
+  benchmark:
+    repo: dziominpavel/Benchmark
+    path: ../Benchmark
+    track: static
+    version_file: pyproject.toml
+    changelog: CHANGELOG.md
+    release: false
+
+  personaldata:
+    repo: dziominpavel/PersonalData
+    path: ../PersonalData
+    track: static
+    version_file: null
+    changelog: CHANGELOG.md
+    release: false
+
+  # Нет git — бамп и теги невозможны в принципе.
+  tempproject:
+    path: ../TempProject
+    track: static
+    version_file: null
+    changelog: CHANGELOG.md
+    git: false
+    release: false
+
+  # Сама витрина: статический сайт, версия не хранится.
+  storefront:
+    repo: dziominpavel/dziominpavel.github.io
+    path: .
+    track: static
+    version_file: null
+    changelog: CHANGELOG.md
+    release: false
