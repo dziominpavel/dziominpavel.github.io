@@ -468,6 +468,20 @@ p { margin: 0 0 var(--sp-3); }
   to { opacity: 1; transform: none; }
 }
 
+/* Стаггер при первой загрузке: карточки выезжают по очереди с шагом 45 мс
+ * в порядке сетки (веб-карточки — после скачиваемых, как в разметке).
+ * При фильтрации позиционные задержки НЕ переиспользуются: filter.js
+ * выставляет animation-delay появившимся карточкам от их видимого порядка. */
+.grid .card:nth-child(1) { animation-delay: 0ms; }
+.grid .card:nth-child(2) { animation-delay: 45ms; }
+.grid .card:nth-child(3) { animation-delay: 90ms; }
+.grid .card:nth-child(4) { animation-delay: 135ms; }
+.grid .card:nth-child(5) { animation-delay: 180ms; }
+.grid .card:nth-child(6) { animation-delay: 225ms; }
+.grid .card:nth-child(7) { animation-delay: 270ms; }
+.grid .card:nth-child(8) { animation-delay: 315ms; }
+.grid .card:nth-child(9) { animation-delay: 360ms; }
+
 .card:hover,
 .card:focus-within {
   transform: translateY(-4px);
@@ -555,11 +569,11 @@ p { margin: 0 0 var(--sp-3); }
  * (один CSS-компонент, один hover, одна анимация; разметка — _card_article
  * в generate.py, фильтр — единое правило по data-platforms в filter.js).
  *
- * Появление при загрузке — единое и одновременное: индивидуальные nth-child
- * задержки сняты, они делали скорость появления разных карточек разной и
- * бросались в глаза. При первом клике по фильтру filter.js вешает .no-anim —
- * дальше любые переключения показывают карточки мгновенно. */
-html.no-anim .card { animation: none; }
+ * Анимация появления: при загрузке — стаггер по позиции в сетке (nth-child
+ * выше); при переключении фильтра анимируются только появившиеся карточки,
+ * и их задержка считается от видимого порядка (filter.js, STEP = 45 мс —
+ * как у nth-child). Поэтому сегменты Android/Windows/Web появляются
+ * одинаково быстро: ни одна карточка не ждёт невидимых соседей. */
 
 /* буквенные заглушки вместо иконки */
 
