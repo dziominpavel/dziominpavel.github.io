@@ -270,7 +270,13 @@ def test_web_registry_and_publish_success():
         assert 'data-filter="web"' in home  # сегмент Web в фильтре главной
         assert 'href="apps/demo-web/"' in home
         assert "Открыть в браузере" in home
-        assert "Обновлено 15.01.2026" in home
+        assert '<span class="card-meta">Обновлено 15.01.2026</span>' in home
+        # дата стоит в шапке под именем — там же, где у скачиваемых карточек
+        start = home.index('<article class="card" data-platforms="web"')
+        block = home[start:start + 1500]  # вся карточка заметно короче окна
+        assert block.index("card-meta") < block.index("card-desc")
+        # слота статистики у web-карточки нет — пустой параграф не выводится
+        assert "card-stats" not in home
         assert '<article class="card" data-platforms="web"' in home  # тот же .card
         assert 'class="web-card"' not in home  # отдельного класса больше нет
         assert 'chip chip-web">Web</span>' in home  # чип и сегмент — латиницей
@@ -413,6 +419,8 @@ def test_render_home_sorted_by_date():
         assert "· обновлено 01.05.2026" in home, home
         assert "<span>Скачиваний: 0</span>" in home, home
         assert home.count("01.05.2026") == 1, "дата дублируется в строке счётчиков"
+        # у web та же дата — в card-meta под именем, а не в строке после описания
+        assert '<span class="card-meta">Обновлено 01.04.2026</span>' in home, home
     print("ok: главная отсортирована по дате — новое сверху, web после скачиваемых")
 
 

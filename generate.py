@@ -460,17 +460,19 @@ def buttons_html(card: dict, *, big: bool = False) -> str:
 
 def _card_article(*, platforms: str, head: str, chips: str, desc: str,
                   stats: str, actions: str) -> str:
-    """Единый скелет карточки каталога: head → chips → desc → stats → actions.
+    """Единый скелет карточки каталога: head → chips → desc → [stats] → actions.
 
     Один билдер и для скачиваемых (card_html), и для web (web_card_html):
     обе карточки — один класс .card, различие только в data-platforms и
     контенте слотов. Структура строк задана здесь, в одном месте —
-    расхождения компонента исключены."""
+    расхождения компонента исключены. Пустой stats (у web-карточки
+    счётчика скачиваний нет) — строка статистики не выводится вовсе,
+    а не рисуется пустой параграф."""
+    stats_html = f'\n      <p class="card-stats">{stats}</p>' if stats else ""
     return f"""    <article class="card" data-platforms="{esc(platforms)}">
       {head}
       <div class="chips">{chips}</div>
-      <p class="card-desc">{esc(desc)}</p>
-      <p class="card-stats">{stats}</p>
+      <p class="card-desc">{esc(desc)}</p>{stats_html}
       <div class="card-actions">
         {actions}
       </div>
@@ -516,18 +518,21 @@ def web_card_html(web_card: dict) -> str:
     """Карточка веб-приложения (store-web-apps: без версии, размера и счётчика).
 
     Тот же компонент .card (скелет — _card_article): head → chips → описание →
-    «Обновлено» → действия; отличия — только контент и data-platforms="web"
-    (маркер сегмента для фильтра главной). Рендерится в общей сетке после
-    скачиваемых приложений."""
+    действия; отличия — только контент и data-platforms="web" (маркер сегмента
+    для фильтра главной). Дата, как и у скачиваемых приложений, живёт
+    в card-meta под именем — читается в одном и том же месте обеих карточек;
+    строки card-stats нет: счётчика скачиваний у веба не бывает.
+    Рендерится в общей сетке после скачиваемых приложений."""
     url = esc(f'apps/{web_card["slug"]}/')
     repo_url = esc(f"https://github.com/{web_card['repo']}")
     head = f"""<a class="card-head" href="{url}">
         {web_icon_html(web_card)}
         <span class="card-title">
           <span class="card-name">{esc(web_card['title'])}</span>
+          <span class="card-meta">Обновлено {fmt_date(web_card['date'])}</span>
         </span>
       </a>"""
-    stats = f'<span>Обновлено {fmt_date(web_card["date"])}</span>'
+    stats = ""
     actions = f"""<a class="btn btn-primary" href="{url}">Открыть в браузере</a>
         <a class="icon-btn" href="{repo_url}" rel="noopener"
            aria-label="Исходники {esc(web_card['title'])} на GitHub"
