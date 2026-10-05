@@ -292,6 +292,49 @@ def collect_projects(entries: list[dict], token: str | None = None,
     return collected
 
 
+def fetch_web_commit_date(repo: str, token: str | None = None) -> str | None:
+    """Дата последнего коммита, тронувшего папку web/ источника.
+
+    GitHub API: commits?path=web. 404/пусто/сбой -> None (вызывающий
+    включает fallback с WARN). Сборка при этом НЕ падает.
+    """
+    try:
+        commits = github_api(f"/repos/{repo}/commits?path=web&per_page=1", token)
+    except urllib.error.HTTPError as exc:
+        print(f"[WARN] {repo}: коммит-дата web/ недоступна "
+              f"(GitHub API {exc.code}) — используется fallback", file=sys.stderr)
+        return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        print(f"[WARN] {repo}: коммит-дата web/ недоступна ({exc}) — "
+              f"используется fallback", file=sys.stderr)
+        return None
+    if not isinstance(commits, list) or not commits:
+        print(f"[WARN] {repo}: в web/ нет коммитов — используется fallback",
+              file=sys.stderr)
+        return None
+    commit = (commits[0].get("commit") or {}) if isinstance(commits[0], dict) else {}
+    date = (commit.get("committer") or {}).get("date") or (commit.get("author") or {}).get("date")
+    if not date:
+        print(f"[WARN] {repo}: в ответе commits нет даты — используется fallback",
+              file=sys.stderr)
+        return None
+    return str(date)
+
+
+def head_commit_date(project_dir: str) -> str | None:
+    """Дата HEAD уже склонированного репо (fallback, без сети)."""
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%cI"],
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
+
+
 def collect_web_projects(entries: list[dict], token: str | None = None,
                          workdir: str | None = None) -> list[dict]:
     """Собирает web-записи (D1/D6): клон источника + контракт папки web/.
@@ -315,8 +358,10 @@ def collect_web_projects(entries: list[dict], token: str | None = None,
             continue
 
         # Дата обновления: updated из объявленного файла данных (Benchmark),
-        # иначе — дата сборки витрины (D3).
-        date = datetime.now(timezone.utc).date().isoformat()
+        # иначе — дата последнего коммита папки web/ источника.
+        # Fallback: HEAD клона -> дата сборки + WARN. Дата сборки здесь —
+        # последний шаг, а не значение по умолчанию.
+        date: str | None = None
         data_file = entry.get("data")
         if data_file:
             data_path = os.path.join(project_dir, *data_file.split("/"))
@@ -329,15 +374,24 @@ def collect_web_projects(entries: list[dict], token: str | None = None,
                     else:
                         print(f"[WARN] {slug}: в {data_file} нет поля updated — "
                               f"дата берётся как дата сборки", file=sys.stderr)
+                        date = datetime.now(timezone.utc).date().isoformat()
                 except (json.JSONDecodeError, OSError, AttributeError) as exc:
                     print(f"[WARN] {slug}: {data_file} не читается ({exc}) — "
                           f"дата берётся как дата сборки", file=sys.stderr)
+                    date = datetime.now(timezone.utc).date().isoformat()
             else:
                 print(f"[WARN] {slug}: файл данных {data_file} в источнике нет — "
                       f"не копируется, дата — дата сборки", file=sys.stderr)
                 data_file = None
+                date = datetime.now(timezone.utc).date().isoformat()
         else:
             data_file = None
+            date = (fetch_web_commit_date(entry["repo"], token)
+                    or head_commit_date(project_dir))
+            if date is None:
+                print(f"[WARN] {slug}: коммит-дату web/ получить не удалось — "
+                      f"дата берётся как дата сборки", file=sys.stderr)
+                date = datetime.now(timezone.utc).date().isoformat()
 
         # Иконка карточки: web/icon.* (опционально; нет — буквенный плейсхолдер).
         icon = next((name for name in sorted(os.listdir(web_dir))
@@ -522,7 +576,7 @@ def web_card_html(web_card: dict) -> str:
     для фильтра главной). Дата, как и у скачиваемых приложений, живёт
     в card-meta под именем — читается в одном и том же месте обеих карточек;
     строки card-stats нет: счётчика скачиваний у веба не бывает.
-    Рендерится в общей сетке после скачиваемых приложений."""
+    Рендерится в единой ленте по дате вперемешку со скачиваемыми."""
     url = esc(f'apps/{web_card["slug"]}/')
     repo_url = esc(f"https://github.com/{web_card['repo']}")
     head = f"""<a class="card-head" href="{url}">
@@ -718,9 +772,10 @@ def write_page(path: str, markup: str) -> None:
 def sort_by_date(cards: list[dict]) -> list[dict]:
     """Порядок витрины: от самой свежей даты к старой, независимо от реестра.
 
-    Скачиваемые — по дате публикации релиза (published_at), web-карточки — по
-    их дате обновления данных. Обе даты ISO-8601, поэтому достаточно
-    лексикографики; карточки без даты уходят в конец. Возвращает новый список.
+    Единая лента: скачиваемые — по дате публикации релиза (published_at),
+    web-карточки — по дате обновления данных (updated / коммит web/).
+    Обе даты ISO-8601, поэтому достаточно лексикографики; карточки без
+    даты уходят в конец. Возвращает новый список.
     """
     return sorted(cards, key=lambda c: c.get("date") or "", reverse=True)
 
@@ -730,21 +785,24 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
 
     Возвращает список относительных путей всех страниц (для sitemap).
     """
-    # Сетка главной отсортирована по дате (новое сверху); порядок registry.yaml
-    # задаёт только состав каталога, а не его порядок. Группы не смешиваются:
-    # web-карточки идут после скачиваемых (store-catalog).
-    cards = sort_by_date(cards)
-    web_cards = sort_by_date(web_cards)
+    # Сетка главной — единая лента по дате (новое сверху, старое внизу);
+    # порядок registry.yaml задаёт только состав каталога, а не порядок.
+    # При равных датах стабильность sorted сохраняет входной порядок
+    # (скачиваемые перед web) — детерминировано без компаратора.
+    merged = [("app", card) for card in cards] + [("web", web_card) for web_card in web_cards]
+    merged = sorted(merged, key=lambda item: item[1].get("date") or "", reverse=True)
+    cards = sorted(cards, key=lambda c: c.get("date") or "", reverse=True)
+    web_cards = sorted(web_cards, key=lambda c: c.get("date") or "", reverse=True)
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     pages: list[str] = [""]
 
     # --- главная -----------------------------------------------------------
-    # Единая сетка: сначала скачиваемые приложения, затем web-карточки —
+    # Единая лента: скачиваемые и web-карточки вперемешку по дате —
     # одним потоком, без отдельной секции.
-    parts = [card_html(card) for card in cards]
-    parts += [web_card_html(web_card) for web_card in web_cards]
+    parts = [card_html(card) if kind == "app" else web_card_html(card)
+             for kind, card in merged]
     cards_html = "\n".join(parts) or \
         "    <p class=\"empty\">Пока нет опубликованных приложений.</p>"
     total = len(cards)

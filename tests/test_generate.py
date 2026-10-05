@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import tempfile
+import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -20,7 +21,9 @@ from generate import (  # noqa: E402
     SITE_URL,
     collect_web_projects,
     detect_platforms,
+    fetch_web_commit_date,
     fmt_date,
+    head_commit_date,
     load_registry,
     load_web_registry,
     release_card,
@@ -285,16 +288,23 @@ def test_web_registry_and_publish_success():
             sitemap = fh.read()
         assert f"<loc>{SITE_URL}/apps/demo-web/</loc>" in sitemap
 
-        # д) запись без поля data: файл данных не копируется, дата — дата сборки
+        # д) запись без поля data: файл данных не копируется, дата — из fallback
+        # (HEAD клона, иначе дата сборки), но не из index.json:updated
         entries_no_data = [dict(entry) for entry in web_entries]
         entries_no_data[0].pop("data")
         gen.clone_project = _fake_web_clone
+        orig_fetch = gen.fetch_web_commit_date
+        orig_head = gen.head_commit_date
+        gen.fetch_web_commit_date = lambda repo, token=None: None
+        gen.head_commit_date = lambda project_dir: "2026-09-28T12:00:00Z"
         try:
             cards_no_data = collect_web_projects(entries_no_data, workdir=work)
         finally:
             gen.clone_project = orig_clone
+            gen.fetch_web_commit_date = orig_fetch
+            gen.head_commit_date = orig_head
         assert cards_no_data[0]["data_file"] is None
-        assert cards_no_data[0]["date"] != "2026-01-15T00:00:00Z"
+        assert cards_no_data[0]["date"] == "2026-09-28T12:00:00Z"
         os.chdir(root)
         try:
             out2 = os.path.join(tmp, "site2")
@@ -389,8 +399,60 @@ def _fake_web_card(slug: str, date, project_dir: str) -> dict:
             "web_dir": web_dir}
 
 
+def test_fetch_web_commit_date():
+    """Дата web без data: парсинг commits?path=web, пусто/сбой -> None."""
+    import generate as gen
+    orig_api = gen.github_api
+    try:
+        gen.github_api = lambda path, token=None: [
+            {"commit": {"committer": {"date": "2026-09-28T12:00:00Z"},
+                        "author": {"date": "2026-09-27T12:00:00Z"}}}]
+        assert fetch_web_commit_date("demo/Repo") == "2026-09-28T12:00:00Z"
+
+        gen.github_api = lambda path, token=None: []
+        with contextlib.redirect_stderr(io.StringIO()):
+            assert fetch_web_commit_date("demo/Repo") is None
+
+        def boom(path, token=None):
+            raise urllib.error.HTTPError(path, 403, "rate", None, None)
+        gen.github_api = boom
+        with contextlib.redirect_stderr(io.StringIO()):
+            assert fetch_web_commit_date("demo/Repo") is None
+    finally:
+        gen.github_api = orig_api
+    with tempfile.TemporaryDirectory() as tmp:
+        assert head_commit_date(tmp) is None
+    print("ok: коммит-дата web/ — парсинг и fallback без падений")
+
+
+def test_collect_web_date_from_commit():
+    """Ветка без data: дата из коммита web/, ветка с data — из updated."""
+    import generate as gen
+    orig_clone = gen.clone_project
+    orig_fetch = gen.fetch_web_commit_date
+    with tempfile.TemporaryDirectory() as tmp:
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        gen.clone_project = _fake_web_clone
+        gen.fetch_web_commit_date = lambda repo, token=None: "2026-09-28T12:00:00Z"
+        try:
+            no_data = collect_web_projects(
+                [{"slug": "plain", "repo": "demo/Source",
+                  "title": "Плейн", "description": "Без данных."}], workdir=work)
+            with_data = collect_web_projects(
+                [{"slug": "withdata", "repo": "demo/Source",
+                  "title": "С данными", "description": "С данными.",
+                  "data": "data/index.json"}], workdir=work)
+        finally:
+            gen.clone_project = orig_clone
+            gen.fetch_web_commit_date = orig_fetch
+        assert no_data[0]["date"] == "2026-09-28T12:00:00Z", no_data
+        assert with_data[0]["date"] == "2026-01-15T00:00:00Z", with_data
+    print("ok: web без data — дата коммита, web с data — updated без изменений")
+
+
 def test_render_home_sorted_by_date():
-    """Главная: скачиваемые по дате релиза (новое сверху), web — после них."""
+    """Главная: единая лента скачиваемые + web по дате (новое сверху)."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cwd = os.getcwd()
     with tempfile.TemporaryDirectory() as tmp:
@@ -413,15 +475,15 @@ def test_render_home_sorted_by_date():
         with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
             home = fh.read()
         order = re.findall(r'class="card-head" href="([^"]+)/"', home)
-        assert order == ["beta", "gamma", "alpha", "undated",
-                         "apps/web-new", "apps/web-old"], order
+        assert order == ["beta", "apps/web-new", "gamma",
+                         "apps/web-old", "alpha", "undated"], order
         # дата подписана и стоит рядом с версией; в строке счётчиков — только счётчик
         assert "· обновлено 01.05.2026" in home, home
         assert "<span>Скачиваний: 0</span>" in home, home
         assert home.count("01.05.2026") == 1, "дата дублируется в строке счётчиков"
         # у web та же дата — в card-meta под именем, а не в строке после описания
         assert '<span class="card-meta">Обновлено 01.04.2026</span>' in home, home
-    print("ok: главная отсортирована по дате — новое сверху, web после скачиваемых")
+    print("ok: главная — единая лента по дате, новое сверху, старое внизу")
 
 
 if __name__ == "__main__":
@@ -433,5 +495,7 @@ if __name__ == "__main__":
     test_web_registry_and_publish_success()
     test_web_publish_broken_source()
     test_sort_by_date_desc()
+    test_fetch_web_commit_date()
+    test_collect_web_date_from_commit()
     test_render_home_sorted_by_date()
     print("ALL PASS")
