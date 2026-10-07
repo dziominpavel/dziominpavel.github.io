@@ -4,7 +4,7 @@
 
 - [x] 1.1 Добавить в `on:` блок `repository_dispatch` с типами `app-released` и `web-updated`, не трогая существующие `schedule`/`push`/`workflow_dispatch`; проверка: `python -c "import yaml;d=yaml.safe_load(open('.github/workflows/build.yml',encoding='utf-8'));on=d.get(True) or d.get('on');assert on['repository_dispatch']['types']==['app-released','web-updated']"` завершается без ошибок
 - [x] 1.2 Добавить второй слот расписания `17,47 * * * *` в `on.schedule` (страховка от проваленных cron-запусков, design D5); проверка: `python -c "import yaml;d=yaml.safe_load(open('.github/workflows/build.yml',encoding='utf-8'));on=d.get(True) or d.get('on');assert len(on['schedule'])==2"` завершается без ошибок
-- [ ] 1.3 Запустить workflow вручную (`workflow_dispatch`) и дождаться деплоя; проверка: последний run сборки имеет статус `success`, живая витрина отдаёт свежую статику
+- [x] 1.3 Запустить workflow вручную (`workflow_dispatch`) и дождаться деплоя; проверка: последний run сборки имеет статус `success`, живая витрина отдаёт свежую статику
 
 ## 2. Релизный хук в эталоне `scripts/release.ps1`
 
@@ -20,8 +20,8 @@
 
 ## 4. Оповещение от web-источников
 
-- [ ] 4.1 Подготовить `.github/workflows/notify-store.yml` для обоих web-источников: триггер `push` c `paths: [web/**, data/**]` для `dziominpavel/Benchmark` и `paths: [web/**]` для `dziominpavel/InstagramTracker`; один шаг `gh api -X POST repos/dziominpavel/dziominpavel.github.io/dispatches -f event_type=web-updated` с `GH_TOKEN: ${{ secrets.STORE_DISPATCH_TOKEN }}`, `permissions: contents: read`; проверка: `python -c "import yaml;yaml.safe_load(open('notify-store.yml',encoding='utf-8'))"` проходит локально, затем файлы созданы в обоих репо (`gh api repos/<repo>/contents/.github/workflows/notify-store.yml` → 200)
-- [ ] 4.2 Владелец заводит classic PAT (scope `repo`) и устанавливает его как секрет `STORE_DISPATCH_TOKEN` в оба web-репозитория (`gh secret set STORE_DISPATCH_TOKEN`); проверка: `gh secret list` показывает секрет в обоих репозиториях
+- [x] 4.1 Подготовить `.github/workflows/notify-store.yml` для обоих web-источников: триггер `push` c `paths: [web/**, data/**]` для `dziominpavel/Benchmark` и `paths: [web/**]` для `dziominpavel/InstagramTracker`; один шаг `gh api -X POST repos/dziominpavel/dziominpavel.github.io/dispatches -f event_type=web-updated` с `GH_TOKEN: ${{ secrets.STORE_DISPATCH_TOKEN }}`, `permissions: contents: read`; проверка: `python -c "import yaml;yaml.safe_load(open('notify-store.yml',encoding='utf-8'))"` проходит локально, затем файлы созданы в обоих репо (`gh api repos/<repo>/contents/.github/workflows/notify-store.yml` → 200)
+- [x] 4.2 Владелец заводит classic PAT (scope `repo`) и устанавливает его как секрет `STORE_DISPATCH_TOKEN` в оба web-репозитория (`gh secret set STORE_DISPATCH_TOKEN`); проверка: `gh secret list` показывает секрет в обоих репозиториях
 - [x] 4.3 Обновить README (см. 5.1) ссылкой на секрет и имена workflow, чтобы настройка была воспроизводима; проверка: в README названы `STORE_DISPATCH_TOKEN`, `notify-store.yml` и оба репозитория-источника
 
 ## 5. Документация и changelog
@@ -31,7 +31,7 @@
 
 ## 6. Сквозная проверка
 
-- [ ] 6.1 Ручной вызов `gh api -X POST repos/dziominpavel/dziominpavel.github.io/dispatches -f event_type=app-released`; проверка: в `gh run list` появляется запуск со `event=repository_dispatch` и статусом `success`, а живая витрина показывает актуальные данные (сейчас отстаёт `YandexMusicDownloader v0.1.0` при опубликованном `v0.2.0`)
-- [ ] 6.2 Пуш коммита, тронувшего `web/**`, в один из web-источников; проверка: запускается `notify-store.yml`, за ним появляется run витрины с `event=repository_dispatch`, дата web-карточки обновляется
-- [ ] 6.3 Первый после внедрения релиз любого приложения через `release.ps1`; проверка: в логе скрипта виден результат оповещения, витрина показывает новую версию без ожидания cron; при недоступном API оповещения релиз всё равно публикуется (exit 0)
+- [x] 6.1 Ручной вызов `gh api -X POST repos/dziominpavel/dziominpavel.github.io/dispatches -f event_type=app-released`; проверка: в `gh run list` появляется запуск со `event=repository_dispatch` и статусом `success`, а живая витрина показывает актуальные данные (сейчас отстаёт `YandexMusicDownloader v0.1.0` при опубликованном `v0.2.0`)
+- [x] 6.2 Пуш коммита, тронувшего `web/**`, в один из web-источников; проверка: запускается `notify-store.yml`, за ним появляется run витрины с `event=repository_dispatch`, дата web-карточки обновляется
+- [x] 6.3 Первый после внедрения релиз любого приложения через `release.ps1`; проверка: в логе скрипта виден результат оповещения, витрина показывает новую версию без ожидания cron; при недоступном API оповещения релиз всё равно публикуется (exit 0)
 - [x] 6.4 `openspec validate add-event-driven-store-sync --strict`; проверка: команда завершается без ошибок
