@@ -292,33 +292,64 @@ def collect_projects(entries: list[dict], token: str | None = None,
     return collected
 
 
-def fetch_web_commit_date(repo: str, token: str | None = None) -> str | None:
-    """Дата последнего коммита, тронувшего папку web/ источника.
+def fetch_path_commit_date(repo: str, path: str,
+                           token: str | None = None) -> str | None:
+    """Дата последнего коммита, тронувшего path (GitHub API commits?path=...).
 
-    GitHub API: commits?path=web. 404/пусто/сбой -> None (вызывающий
-    включает fallback с WARN). Сборка при этом НЕ падает.
+    Сбой/пусто -> None и без вывода: что делать с None, решает вызывающий —
+    для web/ предупреждение печатает fetch_web_commit_date, для сверки
+    updated недоступность коммит-даты не повод шуметь в логе (design D4).
     """
     try:
-        commits = github_api(f"/repos/{repo}/commits?path=web&per_page=1", token)
-    except urllib.error.HTTPError as exc:
-        print(f"[WARN] {repo}: коммит-дата web/ недоступна "
-              f"(GitHub API {exc.code}) — используется fallback", file=sys.stderr)
-        return None
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        print(f"[WARN] {repo}: коммит-дата web/ недоступна ({exc}) — "
-              f"используется fallback", file=sys.stderr)
+        commits = github_api(f"/repos/{repo}/commits?path={path}&per_page=1", token)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+            json.JSONDecodeError):
         return None
     if not isinstance(commits, list) or not commits:
-        print(f"[WARN] {repo}: в web/ нет коммитов — используется fallback",
-              file=sys.stderr)
         return None
     commit = (commits[0].get("commit") or {}) if isinstance(commits[0], dict) else {}
     date = (commit.get("committer") or {}).get("date") or (commit.get("author") or {}).get("date")
-    if not date:
-        print(f"[WARN] {repo}: в ответе commits нет даты — используется fallback",
+    return str(date) if date else None
+
+
+def fetch_web_commit_date(repo: str, token: str | None = None) -> str | None:
+    """Дата последнего коммита, тронувшего папку web/ источника.
+
+    GitHub API: commits?path=web. 404/пусто/сбой -> None + WARN (вызывающий
+    включает fallback). Сборка при этом НЕ падает.
+    """
+    date = fetch_path_commit_date(repo, "web", token)
+    if date is None:
+        print(f"[WARN] {repo}: коммит-дата web/ недоступна "
+              f"(сбой GitHub API или пустой ответ) — используется fallback",
               file=sys.stderr)
-        return None
-    return str(date)
+    return date
+
+
+def check_data_updated_consistency(slug: str, repo: str, data_file: str,
+                                   updated: str,
+                                   token: str | None = None) -> None:
+    """Сверка updated с последним коммитом файла данных (наблюдательная).
+
+    Расхождение календарных дат UTC -> WARN: дата карточки, статика и код
+    возврата сборки не меняются — источником даты остаётся updated.
+    Коммит-дата недоступна или значение не-ISO -> сверка пропускается.
+    """
+    commit_date = fetch_path_commit_date(repo, data_file, token)
+    if commit_date is None:
+        return
+    updated_day, commit_day = str(updated)[:10], str(commit_date)[:10]
+    if updated_day == commit_day:
+        return
+    try:
+        # не-ISO значения сравнивать не с чем — сверка пропускается молча
+        for value in (updated_day, commit_day):
+            datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return
+    print(f"[WARN] {slug}: updated={updated} в {data_file}, а последний коммит "
+          f"файла — {commit_day} — дата карточки не соответствует данным",
+          file=sys.stderr)
 
 
 def head_commit_date(project_dir: str) -> str | None:
@@ -371,6 +402,10 @@ def collect_web_projects(entries: list[dict], token: str | None = None,
                         updated = json.load(fh).get("updated")
                     if updated:
                         date = str(updated)
+                        # Наблюдательная сверка: updated против последнего
+                        # коммита файла данных (WARN, без изменения даты).
+                        check_data_updated_consistency(
+                            slug, entry["repo"], data_file, str(updated), token)
                     else:
                         print(f"[WARN] {slug}: в {data_file} нет поля updated — "
                               f"дата берётся как дата сборки", file=sys.stderr)

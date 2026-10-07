@@ -21,6 +21,7 @@ from generate import (  # noqa: E402
     SITE_URL,
     collect_web_projects,
     detect_platforms,
+    fetch_path_commit_date,
     fetch_web_commit_date,
     fmt_date,
     head_commit_date,
@@ -241,11 +242,16 @@ def test_web_registry_and_publish_success():
         # b) успешный источник -> карточка (дата из index.json:updated)
         work = os.path.join(tmp, "work")
         os.makedirs(work)
+        # сверка updated не ходит в сеть: коммит-дата = updated (совпадение)
+        orig_fetch_path = gen.fetch_path_commit_date
         gen.clone_project = _fake_web_clone
+        gen.fetch_path_commit_date = (
+            lambda repo, path, token=None: "2026-01-15T00:00:00Z")
         try:
             web_cards = collect_web_projects(web_entries, workdir=work)
         finally:
             gen.clone_project = orig_clone
+            gen.fetch_path_commit_date = orig_fetch_path
         assert len(web_cards) == 1, web_cards
         card = web_cards[0]
         assert card["slug"] == "demo-web"
@@ -435,6 +441,10 @@ def test_collect_web_date_from_commit():
         os.makedirs(work)
         gen.clone_project = _fake_web_clone
         gen.fetch_web_commit_date = lambda repo, token=None: "2026-09-28T12:00:00Z"
+        # сверка updated не ходит в сеть: коммит-дата = updated (совпадение)
+        orig_fetch_path = gen.fetch_path_commit_date
+        gen.fetch_path_commit_date = (
+            lambda repo, path, token=None: "2026-01-15T00:00:00Z")
         try:
             no_data = collect_web_projects(
                 [{"slug": "plain", "repo": "demo/Source",
@@ -446,9 +456,108 @@ def test_collect_web_date_from_commit():
         finally:
             gen.clone_project = orig_clone
             gen.fetch_web_commit_date = orig_fetch
+            gen.fetch_path_commit_date = orig_fetch_path
         assert no_data[0]["date"] == "2026-09-28T12:00:00Z", no_data
         assert with_data[0]["date"] == "2026-01-15T00:00:00Z", with_data
     print("ok: web без data — дата коммита, web с data — updated без изменений")
+
+
+def test_fetch_path_commit_date():
+    """1.2: path уходит в запрос к API, ошибка/пусто -> None, без вывода."""
+    import generate as gen
+    orig_api = gen.github_api
+    seen = {}
+
+    def api(path, token=None):
+        seen["path"] = path
+        return [{"commit": {"committer": {"date": "2026-10-07T21:00:00Z"},
+                            "author": {"date": "2026-10-07T20:00:00Z"}}}]
+
+    err_empty = io.StringIO()
+    err_http = io.StringIO()
+    try:
+        gen.github_api = api
+        assert fetch_path_commit_date(
+            "demo/Repo", "data/index.json") == "2026-10-07T21:00:00Z"
+        # path попадает в запрос ровно как объявлен (без перекодирования)
+        assert seen["path"] == ("/repos/demo/Repo/commits"
+                                "?path=data/index.json&per_page=1"), seen
+
+        gen.github_api = lambda path, token=None: []
+        with contextlib.redirect_stderr(err_empty):
+            assert fetch_path_commit_date("demo/Repo", "data/index.json") is None
+
+        def boom(path, token=None):
+            raise urllib.error.HTTPError(path, 403, "rate", None, None)
+        gen.github_api = boom
+        with contextlib.redirect_stderr(err_http):
+            assert fetch_path_commit_date("demo/Repo", "data/index.json") is None
+    finally:
+        gen.github_api = orig_api
+    # D4: недоступность коммит-даты — не повод шуметь в логе сборки
+    assert err_empty.getvalue() == "", err_empty.getvalue()
+    assert err_http.getvalue() == "", err_http.getvalue()
+    print("ok: fetch_path_commit_date — path в запросе, сбой/пусто -> None молча")
+
+
+def test_data_updated_consistency():
+    """2.2: расхождение -> WARN, совпадение/недоступность -> тишина, без data: -> без сверки."""
+    import generate as gen
+    orig_clone = gen.clone_project
+    orig_fetch_path = gen.fetch_path_commit_date
+    orig_fetch_web = gen.fetch_web_commit_date
+    # _fake_web_clone пишет в data/index.json updated = 2026-01-15T00:00:00Z
+    entry = {"slug": "withdata", "repo": "demo/Source",
+             "title": "С данными", "description": "С данными.",
+             "data": "data/index.json"}
+    try:
+        gen.clone_project = _fake_web_clone
+        with tempfile.TemporaryDirectory() as tmp:
+            work = os.path.join(tmp, "work")
+            os.makedirs(work)
+
+            # а) расхождение (updated=15.01, коммит=16.01) -> WARN со слагом
+            #    и обеими датами; дата карточки остаётся updated
+            gen.fetch_path_commit_date = (
+                lambda repo, path, token=None: "2026-01-16T09:30:00Z")
+            with contextlib.redirect_stderr(io.StringIO()) as err_mismatch:
+                cards = collect_web_projects([dict(entry)], workdir=work)
+            out = err_mismatch.getvalue()
+            assert cards[0]["date"] == "2026-01-15T00:00:00Z", cards
+            assert "WARN" in out and "withdata" in out, out
+            assert "2026-01-15" in out and "2026-01-16" in out, out
+
+            # б) даты совпадают (разное время в пределах одного дня) -> тишина
+            gen.fetch_path_commit_date = (
+                lambda repo, path, token=None: "2026-01-15T23:59:00Z")
+            with contextlib.redirect_stderr(io.StringIO()) as err_match:
+                cards = collect_web_projects([dict(entry)], workdir=work)
+            assert "WARN" not in err_match.getvalue(), err_match.getvalue()
+            assert cards[0]["date"] == "2026-01-15T00:00:00Z", cards
+
+            # в) коммит-дата недоступна -> сверка пропускается молча
+            gen.fetch_path_commit_date = lambda repo, path, token=None: None
+            with contextlib.redirect_stderr(io.StringIO()) as err_none:
+                cards = collect_web_projects([dict(entry)], workdir=work)
+            assert "WARN" not in err_none.getvalue(), err_none.getvalue()
+            assert cards[0]["date"] == "2026-01-15T00:00:00Z", cards
+
+            # г) запись без data: -> сверка не вызывается, дата — из коммита web/
+            def forbidden(repo, path, token=None):
+                raise AssertionError(f"сверка вызвана у записи без data: ({path})")
+            gen.fetch_path_commit_date = forbidden
+            gen.fetch_web_commit_date = (
+                lambda repo, token=None: "2026-09-28T12:00:00Z")
+            plain = {k: v for k, v in entry.items() if k != "data"}
+            plain["slug"] = "plain"
+            cards = collect_web_projects([plain], workdir=work)
+            assert cards[0]["date"] == "2026-09-28T12:00:00Z", cards
+            assert cards[0]["data_file"] is None, cards
+    finally:
+        gen.clone_project = orig_clone
+        gen.fetch_path_commit_date = orig_fetch_path
+        gen.fetch_web_commit_date = orig_fetch_web
+    print("ok: сверка updated — расхождение WARN, тишина при совпадении/сбое")
 
 
 def test_render_home_sorted_by_date():
@@ -497,5 +606,7 @@ if __name__ == "__main__":
     test_sort_by_date_desc()
     test_fetch_web_commit_date()
     test_collect_web_date_from_commit()
+    test_fetch_path_commit_date()
+    test_data_updated_consistency()
     test_render_home_sorted_by_date()
     print("ALL PASS")
