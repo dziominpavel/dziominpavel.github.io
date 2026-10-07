@@ -14,8 +14,20 @@ GitHub Releases и держит в корне файлы контракта (`st
   GitHub API (`releases.latest`);
 - `templates/` — HTML-шаблоны витрины (только русский язык);
 - `static/` — CSS и JS (тёмная тема по умолчанию, переключатель темы);
-- `.github/workflows/` — CI: cron каждые 30 минут + при изменении `registry.yaml`,
-  генерация статики и деплой на GitHub Pages.
+- `.github/workflows/build.yml` — сборка статики и деплой на GitHub Pages.
+  Витрина запускается по трём каналам:
+  1. **релиз приложения** — release-скрипт (`scripts/release.ps1`, фаза 10)
+     сразу после публикации GitHub Release шлёт витрине `repository_dispatch`
+     (`app-released`) — сборка идёт без ожидания расписания;
+  2. **пуш web-статики** — workflow самого репозитория-источника
+     (`notify-store.yml`) шлёт `repository_dispatch` (`web-updated`) при пуше,
+     тронувшем `web/**` (для источника с файлом данных — и `data/**`);
+  3. **cron-подстраховка** — `*/30` и `17,47 * * * *`: подхватывает сбой
+     оповещения и всё, что не попало в события.
+
+  Сбой любого канала не оставляет витрину без обновления — ближайший запуск
+  по расписанию дочитает данные сам; витрина каждый раз пересобирается целиком
+  из `releases/latest`, поэтому payload события ей не нужен.
 
 ## Локальное превью
 
@@ -32,4 +44,24 @@ python generate.py
 2. Опубликовать релиз release-скриптом (тег `vX.Y.Z` + ассеты из `dist/`).
 3. Добавить одну запись в `registry.yaml` этого репозитория.
 
-После ближайшей синхронизации CI приложение появится на витрине.
+После публикации релиза витрина пересобирается по событию (release-скрипт
+оповещает её сам), а cron-сборка остаётся подстраховкой.
+
+## Как подключить web-источник
+
+Чтобы витрина обновлялась сразу после пуша статики web-приложения:
+
+1. Добавить запись веб-источника в `registry.yaml` этого репозитория.
+2. Создать в репозитории-источнике `.github/workflows/notify-store.yml` —
+   эталоны: `dziominpavel/Benchmark` (`paths: [web/**, data/**]`) и
+   `dziominpavel/InstagramTracker` (`paths: [web/**]`). Workflow шлёт
+   `POST /repos/dziominpavel/dziominpavel.github.io/dispatches`
+   с `event_type=web-updated` на пуше, тронувшем статику.
+3. Завести classic PAT со scope `repo` и сохранить его в секрет репозитория-источника
+   под именем `STORE_DISPATCH_TOKEN` (`gh secret set STORE_DISPATCH_TOKEN --repo <owner>/<repo>`).
+   Встроенного `GITHUB_TOKEN` недостаточно: он не даёт доступа к чужому репозиторию.
+   Без секрета (или при ошибке отправки) workflow пишет предупреждение и выходит
+   с кодом 0 — пуш не блокируется, витрина подхватит изменения по расписанию.
+4. Проверить: `gh secret list --repo <owner>/<repo>` показывает
+   `STORE_DISPATCH_TOKEN`, а после пуша в `web/**` в `gh run list` появляется
+   запуск `notify-store`, за ним — запуск витрины с `event=repository_dispatch`.

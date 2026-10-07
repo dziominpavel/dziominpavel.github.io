@@ -17,7 +17,9 @@
 #   3. проверяет иконку по полю icon в store.yaml (иначе отказ);
 #   4. проверяет gh установлен и авторизован (иначе отказ до каких-либо изменений);
 #   5. отказывается перезаписывать существующий тег;
-#   6. коммитит бамп, создаёт тег, пушит его и публикует релиз через gh.
+#   6. коммитит бамп, создаёт тег, пушит его и публикует релиз через gh;
+#   7. после публикации best-effort оповещает витрину (repository_dispatch):
+#      сбой оповещения даёт только предупреждение — релиз уже опубликован.
 #
 # Сборка — ответственность билд-скрипта проекта, не release-скрипта.
 # Исторические артефакты (папка dist/archive и т.п.) в релиз не переносятся.
@@ -27,7 +29,7 @@ param(
     [switch]$Major
 )
 
-$SCRIPT_VERSION = "1.1.2"
+$SCRIPT_VERSION = "1.2.0"
 Write-Host "release.ps1 v$SCRIPT_VERSION"
 
 function Fail([string]$Message) {
@@ -407,4 +409,30 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "[OK] Релиз $Tag опубликован: https://github.com/$RepoFullName/releases/tag/$Tag" -ForegroundColor Green
 Write-Host "     Ассеты: $($Staged.Count) шт. (скрипт v$SCRIPT_VERSION)"
+
+# --- 11. Оповещение витрины (best-effort) ------------------------------------
+# Релиз уже опубликован, поэтому сбой оповещения — только предупреждение:
+# код возврата не меняется, тег и релиз не откатываются (capability
+# app-release-pipeline, «Оповещение витрины о релизе»).
+$NotifyStore = "dziominpavel/dziominpavel.github.io"
+$NotifyFile = [System.IO.Path]::GetTempFileName()
+try {
+    $NotifyJson = @{
+        event_type     = "app-released"
+        client_payload = @{ repo = $RepoFullName; tag = $Tag }
+    } | ConvertTo-Json -Depth 4 -Compress
+    # Без BOM: GitHub API ожидает JSON, BOM в начале тела — ошибка разбора.
+    [System.IO.File]::WriteAllText($NotifyFile, $NotifyJson, (New-Object System.Text.UTF8Encoding($false)))
+    $null = & gh api -X POST "repos/$NotifyStore/dispatches" --input $NotifyFile 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] Витрину оповестить не удалось — она подхватит релиз ближайшей сборкой по расписанию." -ForegroundColor Yellow
+    } else {
+        Write-Host "     Витрина оповещена: пересборка запущена по событию."
+    }
+} catch {
+    Write-Host "[WARN] Оповещение витрины не выполнено: $($_.Exception.Message) — релиз опубликован." -ForegroundColor Yellow
+} finally {
+    Remove-Item -Path $NotifyFile -ErrorAction SilentlyContinue
+}
+
 exit 0

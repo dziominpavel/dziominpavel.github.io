@@ -6,8 +6,13 @@
 Песочница самодостаточна и не ходит в сеть:
 - фикстурный git-репозиторий с файлами version/CHANGELOG.md/store.yaml/dist;
 - локальный «remote», в пути которого есть github.com (проходит регэксп скрипта);
-- gh-shim на первом месте PATH: `gh auth status` -> 0, всё остальное -> 1,
-  поэтому публикация доходит до тега и откатывается, не создавая реальный релиз.
+- gh-shim на первом месте PATH с тремя режимами:
+  * по умолчанию `gh auth status` -> 0, всё остальное -> 1, поэтому публикация
+    доходит до тега и откатывается, не создавая реальный релиз (и оповещение
+    витрины не отправляется — публикации не было);
+  * gh_ok=True -> 0 на всё: публикация успешна, оповещение витрины доставлено;
+  * dispatch_fails=True -> `auth` и `release` дают 0, `api` даёт 1: релиз
+    опубликован, а оповещение витрины упало (best-effort ветка).
 """
 
 from __future__ import annotations
@@ -94,11 +99,14 @@ def changelog(unreleased_body: str, version: str = "1.5.2") -> str:
     )
 
 
-def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = False) -> Path:
+def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = False,
+                 dispatch_fails: bool = False) -> Path:
     """Фикстурный проект с удалённым «remote», локальным bin/ и gh-shim.
 
-    gh_ok=True — shim пропускает всё (успешная публикация); по умолчанию
-    публикация рвётся на `gh release create`, чтобы проверить откат.
+    gh_ok=True — shim пропускает всё (успешная публикация и оповещение);
+    dispatch_fails=True — публикация проходит, но `gh api` (оповещение
+    витрины) падает; по умолчанию публикация рвётся на `gh release create`,
+    чтобы проверить откат.
     """
     tmp = Path(tempfile.mkdtemp(prefix="rel-phase-"))
     app = tmp / "app"
@@ -112,6 +120,14 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
         # cmd.exe надёжнее с CRLF, поэтому пишем байты
         if gh_ok:
             shim.write_bytes(b"@echo off\r\nexit /b 0\r\n")
+        elif dispatch_fails:
+            shim.write_bytes(
+                b"@echo off\r\n"
+                b'if "%1"=="auth" exit /b 0\r\n'
+                b'if "%1"=="release" exit /b 0\r\n'
+                b"echo gh-shim blocked dispatch: %*\r\n"
+                b"exit /b 1\r\n"
+            )
         else:
             shim.write_bytes(
                 b"@echo off\r\n"
@@ -123,6 +139,13 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
         shim = bin_dir / "gh"
         if gh_ok:
             write(shim, "#!/bin/sh\nexit 0\n")
+        elif dispatch_fails:
+            write(
+                shim,
+                '#!/bin/sh\n'
+                'if [ "$1" = "auth" ] || [ "$1" = "release" ]; then exit 0; fi\n'
+                'echo "gh-shim blocked dispatch: $*" >&2\nexit 1\n',
+            )
         else:
             write(shim, '#!/bin/sh\nif [ "$1" = "auth" ]; then exit 0; fi\necho "gh-shim blocked: $*" >&2\nexit 1\n')
         shim.chmod(0o755)
@@ -277,6 +300,7 @@ def test_publish_commits_bump_then_rolls_back_failed_tag() -> None:
         assert rc == 0
         rc, out = run_release(app)
         check("gh-shim оборвал публикацию", rc == 1 and "gh release create" in out, out)
+        check("оповещение не отправлялось", "blocked: api" not in out and "Витрина оповещена" not in out, out)
         check("бамп закоммичен",
               git(app, "log", "-1", "--pretty=%s") == "release: 1.6.0 (MINOR)",
               git(app, "log", "-1", "--pretty=%s"))
@@ -307,6 +331,7 @@ def test_publish_pushes_branch_and_tag_to_remote() -> None:
         rc, out = run_release(app)
         check("публикация прошла", rc == 0, out)
         check("релиз опубликован", "[OK] Релиз" in out, out)
+        check("витрина оповещена о релизе", "Витрина оповещена" in out, out)
 
         branch = git(app, "rev-parse", "--abbrev-ref", "HEAD")
         remote = app.parent / "github.com" / "zzz-no-such-owner" / "app.git"
@@ -320,6 +345,24 @@ def test_publish_pushes_branch_and_tag_to_remote() -> None:
 
         top = git(app, "log", "-1", "--pretty=%s")
         check("коммит бампа на вершине", top == "release: 1.6.0 (MINOR)", top)
+    finally:
+        cleanup(app)
+
+
+def test_publish_survives_failed_store_notification() -> None:
+    """Оповещение витрины — не критическая фаза: публикация успешна,
+    `gh api ... dispatches` падает -> [WARN], код возврата 0, тег опубликован."""
+    app = make_fixture("### Добавлено\n- Оповещение витрины не валит релиз.\n",
+                       dispatch_fails=True)
+    try:
+        rc, out = run_release(app, "-Prepare")
+        assert rc == 0, out
+        rc, out = run_release(app)
+        check("публикация прошла при сбое оповещения", rc == 0, out)
+        check("релиз опубликован", "[OK] Релиз" in out, out)
+        check("предупреждение вместо ошибки", "[WARN] Витрину оповестить не удалось" in out, out)
+        check("тег остался опубликованным", git(app, "tag", "--list") == "v1.6.0",
+              git(app, "tag", "--list"))
     finally:
         cleanup(app)
 
@@ -341,6 +384,7 @@ def main() -> int:
     test_publish_refuses_version_desync()
     test_publish_commits_bump_then_rolls_back_failed_tag()
     test_publish_pushes_branch_and_tag_to_remote()
+    test_publish_survives_failed_store_notification()
     print(f"ALL PASS ({PASS} проверок)")
     return 0
 

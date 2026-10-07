@@ -1,12 +1,16 @@
 name: build-site
 
 # Витрина «Мои приложения»: автосборка статики из GitHub Releases проектов.
-# Триггеры: cron каждые 30 мин (свежие версии/размеры/счётчики), push реестра
+# Триггеры: событие (релиз приложения или пуш web-статики -> repository_dispatch),
+# cron-подстраховка (два слота: пропущенный запуск ловит соседний), push реестра
 # и шаблонов (новый проект/правка данных), ручной запуск.
 
 on:
   schedule:
     - cron: "*/30 * * * *"
+    - cron: "17,47 * * * *"
+  repository_dispatch:
+    types: [app-released, web-updated]
   push:
     branches: [main]
     paths:
