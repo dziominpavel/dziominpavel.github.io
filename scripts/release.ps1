@@ -6,18 +6,24 @@
 # Две фазы (см. capability app-release-pipeline):
 #   release.ps1 -Prepare  — ДО сборки: классифицирует ## [Unreleased], записывает
 #                           новый номер в файл version, сворачивает секцию.
+#                           Отказывается, если в [Unreleased] нет пользовательского
+#                           саммари (текста выше первой строки '###').
 #                           Не коммитит, не тегирует, не трогает dist/ и gh.
 #   release.ps1           — ПОСЛЕ сборки: проверяет подготовленность (секция пуста,
-#                           версия и changelog согласованы, дерево чисто), коммитит
-#                           файлы бампа, создаёт тег, пушит и публикует релиз.
+#                           версия и changelog согласованы, дерево чисто, заметки
+#                           релиза непусты), коммитит файлы бампа, создаёт тег,
+#                           пушит и публикует релиз.
 #
 # Публикация (общее поведение):
 #   1. читает версию из файла version (MAJOR.MINOR.PATCH) -> тег vX.Y.Z;
+#   1b. вырезает из CHANGELOG.md секцию новой версии и берёт из неё заметки:
+#        строки до первой '###' (если категорий нет — вся секция); пусто -> отказ;
 #   2. проверяет, что dist/ содержит ассеты (иначе отказ, тег не создаётся);
 #   3. проверяет иконку по полю icon в store.yaml (иначе отказ);
 #   4. проверяет gh установлен и авторизован (иначе отказ до каких-либо изменений);
 #   5. отказывается перезаписывать существующий тег;
-#   6. коммитит бамп, создаёт тег, пушит его и публикует релиз через gh;
+#   6. коммитит бамп, создаёт тег тем же текстом, что и заметки, пушит его
+#      и публикует релиз через gh с --notes-file (UTF-8 без BOM);
 #   7. после публикации best-effort оповещает витрину (repository_dispatch):
 #      сбой оповещения даёт только предупреждение — релиз уже опубликован.
 #
@@ -29,7 +35,7 @@ param(
     [switch]$Major
 )
 
-$SCRIPT_VERSION = "1.2.0"
+$SCRIPT_VERSION = "1.3.0"
 Write-Host "release.ps1 v$SCRIPT_VERSION"
 
 function Fail([string]$Message) {
@@ -115,6 +121,50 @@ function Get-UnreleasedText([object[]]$Body) {
     return ($Body -join "`n")
 }
 
+# --- Заметки релиза ----------------------------------------------------------
+
+# Строки секции версии: от '## [<Version>]' до следующей строки '## '.
+# Заголовок секции в результат не входит — он дублировал бы заголовок релиза
+# и не был бы «текстом для заметок» (см. capability app-release-pipeline).
+function Get-VersionSectionBody([object[]]$Lines, [string]$Version) {
+    # Пустые случаи возвращаются как пустой массив (без запятой перед @()):
+    # пара «return , @()» + «@()» на месте вызова даёт Count=1 и гейт не срабатывает.
+    if ($null -eq $Lines) { return @() }
+    $pattern = '^## \[' + [regex]::Escape($Version) + '\]'
+    $start = -1
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match $pattern) { $start = $i; break }
+    }
+    if ($start -lt 0) { return @() }
+    $end = $Lines.Count
+    for ($i = $start + 1; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match '^## ') { $end = $i; break }
+    }
+    if ($end -le ($start + 1)) { return @() }
+    return @($Lines[($start + 1)..($end - 1)])
+}
+
+# Тело релиза: строки секции до первой строки '###'. Если категорий в секции
+# нет (исторические секции), заметками становится вся секция. Ведущие и
+# хвостовые пустые строки отбрасываются; пустой результат -> @() — публиковать
+# нечего, вызывающий обязан отказать.
+function Get-ReleaseNotes([object[]]$SectionBody) {
+    # См. комментарий выше: только «обычный» возврат массива, без ведущей запятой.
+    if ($null -eq $SectionBody) { return @() }
+    $notes = @()
+    foreach ($line in $SectionBody) {
+        if ("$line" -match '^###') { break }
+        $notes += $line
+    }
+    while ($notes.Count -gt 0 -and "$($notes[0])".Trim() -eq '') {
+        $notes = @($notes | Select-Object -Skip 1)
+    }
+    $end = $notes.Count - 1
+    while ($end -ge 0 -and "$($notes[$end])".Trim() -eq '') { $end-- }
+    if ($end -lt 0) { return @() }
+    return @($notes[0..$end])
+}
+
 # --- Классификация ----------------------------------------------------------
 
 function Resolve-ReleaseLevel([object[]]$Body, [bool]$ForceMajor) {
@@ -160,6 +210,15 @@ if ($Prepare) {
 
     if ($items.Count -eq 0) {
         Fail "Нет накопленных изменений: секция '## [Unreleased]' отсутствует или пуста. Нечего готовить — версия не меняется."
+    }
+
+    # Саммари обязательно: тело релиза собирается из changelog, и если выше
+    # первой '###' нет текста, релиз уехал бы с пустым описанием.
+    if (@(Get-ReleaseNotes $cl.Body).Count -eq 0) {
+        Fail ("В секции '## [Unreleased]' нет пользовательского саммари: напишите 2-5 строк " +
+              "о том, что заметит использующий приложение человек, ВЫШЕ первой строки '###' " +
+              "(категории и инженерские детали остаются под ней). Подготовка остановлена, " +
+              "файлы не изменены.")
     }
 
     $dirty = Get-GitPorcelain
@@ -258,6 +317,18 @@ if ((Get-UnreleasedItems $cl.Body).Count -gt 0) {
     Fail "Секция '## [Unreleased]' непуста — релиз не подготовлен, публиковать нечего. Сначала выполните: release.ps1 -Prepare"
 }
 Write-Host "CHANGELOG: верх секции $head, [Unreleased] пуст"
+
+# --- 1b. Заметки релиза из секции changelog --------------------------------
+# Тело релиза = секции новой версии без заголовка, до первой строки '###'
+# (если категорий нет — вся секция). Пусто -> отказ: тег и коммит ещё не
+# создавались, никаких изменений не было.
+$NotesLines = @(Get-ReleaseNotes (Get-VersionSectionBody $cl.Lines $Version))
+if ($NotesLines.Count -eq 0) {
+    Fail ("Секция [$Version] не содержит текста для заметок — пусто до первой строки '###'. " +
+          "Тело релиза было бы пустым, публиковать нельзя. Добавьте пользовательское саммари " +
+          "в секцию и повторите (публикации не было).")
+}
+Write-Host "Notes: $($NotesLines.Count) строк из секции [$Version]"
 
 # --- 2. Артефакты в dist/ ---------------------------------------------------
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -388,23 +459,33 @@ if ($Dupes.Count -gt 0) {
 }
 
 # --- 10. Тег + релиз ---------------------------------------------------------
-Write-Host "Creating tag $Tag ..."
-$null = & git tag -a $Tag -m "Release $Tag" 2>&1
-if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать тег $Tag." }
+# Заметки: временный файл UTF-8 без BOM -> --notes-file, тот же текст -> тег.
+# finally убирает файл и при успехе, и при Fail внутри блока.
+$NotesFile = [System.IO.Path]::GetTempFileName()
+try {
+    $NotesText = $NotesLines -join $cl.NewLine
+    [System.IO.File]::WriteAllText($NotesFile, $NotesText, (New-Object System.Text.UTF8Encoding($false)))
 
-$null = & git push origin $Tag 2>&1
-if ($LASTEXITCODE -ne 0) {
-    & git tag -d $Tag | Out-Null
-    Fail "Не удалось запушить тег $Tag. Релиз не создан."
-}
+    Write-Host "Creating tag $Tag ..."
+    $null = & git tag -a $Tag -m $NotesText 2>&1
+    if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать тег $Tag." }
 
-Write-Host "Publishing release $Tag ($($Staged.Count) asset(s)) ..."
-$ghOut = & gh release create $Tag @Staged --title $Tag --verify-tag 2>&1
-if ($LASTEXITCODE -ne 0) {
-    $ghError = ($ghOut -join " ")
-    & git push --delete origin $Tag 2>&1 | Out-Null
-    & git tag -d $Tag | Out-Null
-    Fail "gh release create завершился ошибкой, тег откачен. Причина: $ghError"
+    $null = & git push origin $Tag 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        & git tag -d $Tag | Out-Null
+        Fail "Не удалось запушить тег $Tag. Релиз не создан."
+    }
+
+    Write-Host "Publishing release $Tag ($($Staged.Count) asset(s), $($NotesLines.Count) notes line(s)) ..."
+    $ghOut = & gh release create $Tag @Staged --title $Tag --verify-tag --notes-file $NotesFile 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $ghError = ($ghOut -join " ")
+        & git push --delete origin $Tag 2>&1 | Out-Null
+        & git tag -d $Tag | Out-Null
+        Fail "gh release create завершился ошибкой, тег откачен. Причина: $ghError"
+    }
+} finally {
+    Remove-Item -Path $NotesFile -ErrorAction SilentlyContinue
 }
 
 Write-Host "[OK] Релиз $Tag опубликован: https://github.com/$RepoFullName/releases/tag/$Tag" -ForegroundColor Green

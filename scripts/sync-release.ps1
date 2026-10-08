@@ -132,12 +132,23 @@ function Get-RemoteScriptVersion([string]$Repo) {
 }
 
 function Set-RemoteFile([string]$Repo, [string]$Path, [string]$LocalPath, [string]$Sha, [string]$Message) {
+    # Контент уходит через --input с временным файлом, а не через -f content=...:
+    # base64 файла больше ~24,5 КБ не влезает в командную строку Windows
+    # (лимит 32767 символов) — gh не запускается вовсе: «The filename or
+    # extension is too long». Такого размера release.ps1 уже достиг.
     $b64 = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($LocalPath))
-    $args = @("api", "-X", "PUT", "repos/$Repo/contents/$Path",
-              "-f", "message=$Message", "-f", "content=$b64")
-    if ($Sha) { $args += @("-f", "sha=$Sha") }
-    $r = Invoke-Gh $args
-    return ($r.ExitCode -eq 0)
+    $payload = @{ message = $Message; content = $b64 }
+    if ($Sha) { $payload.sha = $Sha }
+    $jsonFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $json = $payload | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText($jsonFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+        $args = @("api", "-X", "PUT", "repos/$Repo/contents/$Path", "--input", $jsonFile)
+        $r = Invoke-Gh $args
+        return ($r.ExitCode -eq 0)
+    } finally {
+        Remove-Item -Path $jsonFile -ErrorAction SilentlyContinue
+    }
 }
 
 # --- локальный канал ---------------------------------------------------------

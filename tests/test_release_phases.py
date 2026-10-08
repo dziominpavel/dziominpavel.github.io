@@ -13,6 +13,9 @@
   * gh_ok=True -> 0 на всё: публикация успешна, оповещение витрины доставлено;
   * dispatch_fails=True -> `auth` и `release` дают 0, `api` даёт 1: релиз
     опубликован, а оповещение витрины упало (best-effort ветка).
+  во всех режимах shim дописывает свои аргументы в bin/gh-args.log и копирует
+  файл за флагом --notes-file в bin/notes-captured.txt — по ним проверяется,
+  что тело релиза ушло в gh именно из changelog.
 """
 
 from __future__ import annotations
@@ -58,6 +61,10 @@ def run_release(app: Path, *flags: str) -> tuple[int, str]:
     ]
     env = dict(os.environ)
     env["PATH"] = str(app.parent / "bin") + os.pathsep + env.get("PATH", "")
+    # gh-shim пишет свои логи сюда: вызывается он как «gh» из PATH, и %~dp0 у него
+    # пуст (cmd подставляет полный путь не всегда), а писать в репозиторий нельзя —
+    # release.ps1 обязан видеть чистое дерево.
+    env["GH_SHIM_DIR"] = str(app.parent / "bin")
     proc = subprocess.run(
         cmd, capture_output=True, env=env, cwd=str(app), timeout=180,
     )
@@ -99,6 +106,21 @@ def changelog(unreleased_body: str, version: str = "1.5.2") -> str:
     )
 
 
+# Пользовательское саммари: блок выше первой строки '###' — из него собирается
+# тело релиза. В фикстурах, где релиз реально готовится, саммари обязательное
+# (иначе срабатывает гейт в -Prepare).
+SUMMARY = (
+    "- Экспорт в CSV готов — старый формат больше не читается.\n"
+    "- Виджет дня перестал мигать при перезагрузке.\n"
+    "- Подсказки стали короче (≥ 30% меньше текста на экране).\n"
+)
+
+
+def with_summary(body: str) -> str:
+    """Добавить пользовательское саммари выше категорий секции Unreleased."""
+    return f"{SUMMARY}\n{body}"
+
+
 def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = False,
                  dispatch_fails: bool = False) -> Path:
     """Фикстурный проект с удалённым «remote», локальным bin/ и gh-shim.
@@ -114,40 +136,74 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
     bin_dir = tmp / "bin"
     bin_dir.mkdir()
 
-    # gh-shim: `auth` -> 0, остальное -> 1 (публикация падает до создания релиза)
+    # gh-shim: `auth` -> 0, остальное -> 1 (публикация падает до создания релиза).
+    # Общий пролог всех режимов: пишет аргументы в bin/gh-args.log и копирует
+    # файл за --notes-file в bin/notes-captured.txt (проверка заметок релиза).
     if os.name == "nt":
         shim = bin_dir / "gh.cmd"
         # cmd.exe надёжнее с CRLF, поэтому пишем байты
+        prologue = (
+            b"@echo off\r\n"
+            b"setlocal\r\n"
+            b"set SHIM_CMD=%~1\r\n"
+            b"set SHIM_ARGS=%*\r\n"
+            b"set SHIM_DIR=%GH_SHIM_DIR%\r\n"
+            b'if "%SHIM_DIR%"=="" set SHIM_DIR=%~dp0\r\n'
+            b'if "%SHIM_DIR%"=="" set SHIM_DIR=.\r\n'
+            b"set SHIM_N=0\r\n"
+            b":loop\r\n"
+            b'echo %0 %1 >>"%SHIM_DIR%\\gh-args.log"\r\n'
+            b'if /i "%~0"=="--notes-file" if not "%~1"=="" '
+            b'copy /y "%~1" "%SHIM_DIR%\\notes-captured.txt" >nul\r\n'
+            b"shift\r\n"
+            b"set /a SHIM_N+=1\r\n"
+            b'if %SHIM_N% LSS 64 if not "%~0"=="" goto :loop\r\n'
+        )
         if gh_ok:
-            shim.write_bytes(b"@echo off\r\nexit /b 0\r\n")
+            tail = b"exit /b 0\r\n"
         elif dispatch_fails:
-            shim.write_bytes(
-                b"@echo off\r\n"
-                b'if "%1"=="auth" exit /b 0\r\n'
-                b'if "%1"=="release" exit /b 0\r\n'
-                b"echo gh-shim blocked dispatch: %*\r\n"
+            tail = (
+                b'if "%SHIM_CMD%"=="auth" exit /b 0\r\n'
+                b'if "%SHIM_CMD%"=="release" exit /b 0\r\n'
+                b"echo gh-shim blocked dispatch: %SHIM_ARGS%\r\n"
                 b"exit /b 1\r\n"
             )
         else:
-            shim.write_bytes(
-                b"@echo off\r\n"
-                b'if "%1"=="auth" exit /b 0\r\n'
-                b"echo gh-shim blocked: %*\r\n"
+            tail = (
+                b'if "%SHIM_CMD%"=="auth" exit /b 0\r\n'
+                b"echo gh-shim blocked: %SHIM_ARGS%\r\n"
                 b"exit /b 1\r\n"
             )
+        shim.write_bytes(prologue + tail)
     else:
         shim = bin_dir / "gh"
+        prologue = (
+            "#!/bin/sh\n"
+            'DIR="${GH_SHIM_DIR:-$(dirname "$0")}"\n'
+            '[ -n "$DIR" ] || DIR=.\n'
+            'CMD="$1"\n'
+            'ARGS="$*"\n'
+            "while [ $# -gt 0 ]; do\n"
+            '  printf "%s %s\\n" "$0" "$1" >> "$DIR/gh-args.log"\n'
+            '  if [ "$1" = "--notes-file" ] && [ -n "$2" ]; then\n'
+            '    cp "$2" "$DIR/notes-captured.txt" 2>/dev/null\n'
+            "  fi\n"
+            "  shift\n"
+            "done\n"
+        )
         if gh_ok:
-            write(shim, "#!/bin/sh\nexit 0\n")
+            tail = "exit 0\n"
         elif dispatch_fails:
-            write(
-                shim,
-                '#!/bin/sh\n'
-                'if [ "$1" = "auth" ] || [ "$1" = "release" ]; then exit 0; fi\n'
-                'echo "gh-shim blocked dispatch: $*" >&2\nexit 1\n',
+            tail = (
+                'if [ "$CMD" = "auth" ] || [ "$CMD" = "release" ]; then exit 0; fi\n'
+                'echo "gh-shim blocked dispatch: $ARGS" >&2\nexit 1\n'
             )
         else:
-            write(shim, '#!/bin/sh\nif [ "$1" = "auth" ]; then exit 0; fi\necho "gh-shim blocked: $*" >&2\nexit 1\n')
+            tail = (
+                'if [ "$CMD" = "auth" ]; then exit 0; fi\n'
+                'echo "gh-shim blocked: $ARGS" >&2\nexit 1\n'
+            )
+        write(shim, prologue + tail)
         shim.chmod(0o755)
 
     shutil.copy(SCRIPT, app / "release.ps1")
@@ -201,7 +257,7 @@ def test_prepare_refuses_empty_unreleased() -> None:
 
 
 def test_prepare_refuses_dirty_tree() -> None:
-    app = make_fixture("### Исправлено\n- Фикс\n", dirty=True)
+    app = make_fixture(with_summary("### Исправлено\n- Фикс\n"), dirty=True)
     try:
         rc, out = run_release(app, "-Prepare")
         check("грязное дерево -> отказ", rc == 1 and "не чистое" in out, out)
@@ -221,7 +277,7 @@ def test_prepare_levels() -> None:
         ("Изменено -> MINOR", "### Изменено\n- Поведение\n", (), "1.6.0"),
     ]
     for name, body, flags, expected in cases:
-        app = make_fixture(body)
+        app = make_fixture(with_summary(body))
         try:
             rc, out = run_release(app, "-Prepare", *flags)
             version = (app / "version").read_text(encoding="utf-8").strip()
@@ -231,7 +287,7 @@ def test_prepare_levels() -> None:
 
 
 def test_prepare_has_no_side_effects() -> None:
-    app = make_fixture("### Добавлено\n- Экспорт\n")
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
     try:
         head_before = git(app, "rev-parse", "HEAD")
         rc, out = run_release(app, "-Prepare")
@@ -255,7 +311,7 @@ def test_prepare_has_no_side_effects() -> None:
 # ---------------------------------------------------------------- фаза публикации
 
 def test_publish_refuses_without_prepare() -> None:
-    app = make_fixture("### Добавлено\n- Экспорт\n")
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
     try:
         rc, out = run_release(app)
         check("непустой Unreleased -> отказ", rc == 1 and "-Prepare" in out, out)
@@ -265,7 +321,7 @@ def test_publish_refuses_without_prepare() -> None:
 
 
 def test_publish_refuses_dirty_files() -> None:
-    app = make_fixture("### Добавлено\n- Экспорт\n")
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
     try:
         rc, _ = run_release(app, "-Prepare")
         assert rc == 0
@@ -279,7 +335,7 @@ def test_publish_refuses_dirty_files() -> None:
 
 
 def test_publish_refuses_version_desync() -> None:
-    app = make_fixture("### Добавлено\n- Экспорт\n")
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
     try:
         rc, _ = run_release(app, "-Prepare")
         assert rc == 0
@@ -294,7 +350,7 @@ def test_publish_refuses_version_desync() -> None:
 def test_publish_commits_bump_then_rolls_back_failed_tag() -> None:
     """Полный прогон до тега: коммит бампа проходит, публикация падает на gh-shim,
     тег откатывается. Реальный релиз не создаётся."""
-    app = make_fixture("### Добавлено\n- Экспорт\n")
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
     try:
         rc, _ = run_release(app, "-Prepare")
         assert rc == 0
@@ -324,7 +380,7 @@ def test_publish_pushes_branch_and_tag_to_remote() -> None:
     Дефект контрольного прогона: скрипт пушил только тег, и ветка на GitHub
     отставала — у клона version и верх changelog не совпадали с тегом.
     """
-    app = make_fixture("### Добавлено\n- Публикация уносит ветку в remote.\n", gh_ok=True)
+    app = make_fixture(with_summary("### Добавлено\n- Публикация уносит ветку в remote.\n"), gh_ok=True)
     try:
         rc, out = run_release(app, "-Prepare")
         check("подготовка прошла", rc == 0, out)
@@ -352,7 +408,7 @@ def test_publish_pushes_branch_and_tag_to_remote() -> None:
 def test_publish_survives_failed_store_notification() -> None:
     """Оповещение витрины — не критическая фаза: публикация успешна,
     `gh api ... dispatches` падает -> [WARN], код возврата 0, тег опубликован."""
-    app = make_fixture("### Добавлено\n- Оповещение витрины не валит релиз.\n",
+    app = make_fixture(with_summary("### Добавлено\n- Оповещение витрины не валит релиз.\n"),
                        dispatch_fails=True)
     try:
         rc, out = run_release(app, "-Prepare")
@@ -367,6 +423,58 @@ def test_publish_survives_failed_store_notification() -> None:
         cleanup(app)
 
 
+def test_prepare_refuses_missing_summary() -> None:
+    """Гейт саммари: секция начинается сразу с '###' -> отказ до записи файлов.
+
+    Заметки релиза берутся из блока выше первой '###': если его нет, тело
+    релиза осталось бы пустым — подготовка обязана остановиться.
+    """
+    body = "### Исправлено\n- Фикс\n"
+    app = make_fixture(body)
+    try:
+        rc, out = run_release(app, "-Prepare")
+        check("нет саммари -> отказ", rc == 1 and "саммари" in out, out)
+        check("нет саммари: версия не изменена",
+              (app / "version").read_text(encoding="utf-8").strip() == "1.5.2")
+        check("нет саммари: changelog не изменён",
+              (app / "CHANGELOG.md").read_text(encoding="utf-8") == changelog(body))
+        check("нет саммари: тег не создан", git(app, "tag", "--list") == "")
+    finally:
+        cleanup(app)
+
+
+def test_publish_notes_from_changelog_section() -> None:
+    """Заметки релиза = секция до первой '###': файл заметок, тег -m, --notes-file.
+
+    Три равнозначных способа проверить одно и то же тело: аргумент --notes-file,
+    содержимое этого файла (UTF-8 без BOM, байт в байт) и сообщение тега.
+    """
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт в CSV\n"), gh_ok=True)
+    expected = "\n".join(SUMMARY.splitlines())
+    try:
+        rc, out = run_release(app, "-Prepare")
+        check("подготовка прошла (саммари есть)", rc == 0, out)
+        rc, out = run_release(app)
+        check("публикация прошла", rc == 0, out)
+        check("скрипт сообщил заметки", "Notes:" in out, out)
+
+        args_log = (app.parent / "bin" / "gh-args.log").read_text(
+            encoding="utf-8", errors="replace")
+        check("gh вызван с --notes-file", "--notes-file" in args_log, args_log)
+
+        captured = (app.parent / "bin" / "notes-captured.txt").read_bytes()
+        check("тело релиза = блок до '###' (байт в байт)",
+              captured == expected.encode("utf-8"),
+              f"ожидалось={expected!r} получено={captured!r}")
+        check("заметки в UTF-8 без BOM", not captured.startswith(b"\xef\xbb\xbf"))
+
+        message = git(app, "cat-file", "-p", "v1.6.0").split("\n\n", 1)[1]
+        check("тело тега = заметкам релиза",
+              message.strip() == expected.strip(), f"тег={message!r}")
+    finally:
+        cleanup(app)
+
+
 def main() -> int:
     if SHELL is None:
         print("SKIP: PowerShell/pwsh не найден")
@@ -376,12 +484,14 @@ def main() -> int:
         return 0
 
     test_prepare_refuses_empty_unreleased()
+    test_prepare_refuses_missing_summary()
     test_prepare_refuses_dirty_tree()
     test_prepare_levels()
     test_prepare_has_no_side_effects()
     test_publish_refuses_without_prepare()
     test_publish_refuses_dirty_files()
     test_publish_refuses_version_desync()
+    test_publish_notes_from_changelog_section()
     test_publish_commits_bump_then_rolls_back_failed_tag()
     test_publish_pushes_branch_and_tag_to_remote()
     test_publish_survives_failed_store_notification()
