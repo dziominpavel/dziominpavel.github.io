@@ -34,7 +34,7 @@ import yaml
 REGISTRY_PATH = "registry.yaml"
 DEFAULT_OUT_DIR = "_site"
 SITE_URL = "https://dziominpavel.github.io"
-GOATCOUNTER_SITE_ID = ""  # заполняется в задаче 5.3 (аккаунт владельца)
+GOATCOUNTER_SITE_ID = "dziominpavel"  # аккаунт владельца (задача 5.3)
 SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 # Относительный путь к файлу данных внутри клонированного web-источника.
 DATA_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")

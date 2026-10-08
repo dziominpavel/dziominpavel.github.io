@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+- Подключён счётчик посещений GoatCounter (`dziominpavel.goatcounter.com`):
+  витрина считает просмотры, статистика доступна в панели GoatCounter.
 - Витрина пересобирается по событию, а не только по расписанию: после
   публикации GitHub Release release-скрипт шлёт витрине оповещение
   (`repository_dispatch`), а workflow web-источников — после пуша,
