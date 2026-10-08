@@ -485,15 +485,6 @@ def fmt_date(iso: str | None) -> str:
         return str(iso)
 
 
-def plural_apps(count: int) -> str:
-    """Склонение существительного после числа: 1 приложение, 2 приложения, 5 приложений."""
-    if count % 10 == 1 and count % 100 != 11:
-        return "приложение"
-    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
-        return "приложения"
-    return "приложений"
-
-
 def letter_placeholder(name: str, size: str = "48") -> str:
     """Цветная буквенная заглушка по первой букве названия."""
     letter = esc(str(name).strip()[:1].upper() or "?")
@@ -682,7 +673,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 <body>
   <header class="site-header">
     <div class="site-header-inner">
-      <a class="brand" href="{root}"><span class="brand-mark" aria-hidden="true">М</span>Мои приложения</a>
+      <a class="brand" href="{root}"><img class="brand-mark" src="{root}static/img/logo.png" alt="" width="30" height="30">Мои приложения</a>
       <nav class="site-nav" aria-label="Навигация">
         <a href="{root}">Главная</a>
         <a href="{root}about/">О проекте</a>
@@ -708,20 +699,18 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 
 INDEX_TEMPLATE = """    <section class="hero">
       <div class="hero-text">
-        <h1>Мои приложения</h1>
-        <p class="lead">Готовые приложения для скачивания: версии, размеры и кнопки — всегда свежие, из GitHub Releases.</p>
+        <div class="hero-title">
+          <img class="hero-logo" src="static/img/logo.png" alt="" width="96" height="96">
+          <h1>Мои приложения</h1>
+        </div>
+        <p class="lead">Каталог бесплатных приложений: Android, Windows и веб. Скачивайте готовые сборки.</p>
       </div>
-      <ul class="hero-stats" aria-label="Статистика каталога">
-        <li><strong class="stat-num">{total}</strong><span class="stat-label">{total_word}</span></li>
-        <li><strong class="stat-num">{android}</strong><span class="stat-label">Android</span></li>
-        <li><strong class="stat-num">{windows}</strong><span class="stat-label">Windows</span></li>
-      </ul>
+      <div class="filters" role="group" aria-label="Фильтр каталога">
+        <button class="filter is-active" type="button" data-filter="all">Все <span class="filter-count">{all_count}</span></button>
+        <button class="filter" type="button" data-filter="android">Android <span class="filter-count">{android}</span></button>
+        <button class="filter" type="button" data-filter="windows">Windows <span class="filter-count">{windows}</span></button>{web_filter}
+      </div>
     </section>
-    <div class="filters" role="group" aria-label="Фильтр каталога">
-      <button class="filter is-active" type="button" data-filter="all">Все <span class="filter-count">{all_count}</span></button>
-      <button class="filter" type="button" data-filter="android">Android <span class="filter-count">{android}</span></button>
-      <button class="filter" type="button" data-filter="windows">Windows <span class="filter-count">{windows}</span></button>{web_filter}
-    </div>
     <div class="grid">
 {cards}
     </div>
@@ -756,18 +745,25 @@ ABOUT_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> 
     <h1>О проекте</h1>
     <p class="lead">«Мои приложения» — бесплатный каталог моих приложений: описания,
     системные требования, скриншоты и кнопки скачивания.</p>
-    <h2>Откуда данные</h2>
-    <p>Каталог собирается автоматически: версия, размер, дата и счётчик скачиваний
-    берутся из GitHub Releases каждого проекта, описания и иконки — из файлов
-    самого проекта. Ручная работа не нужна: выпустил релиз — витрина обновилась.</p>
-    <h2>Почему всё так</h2>
-    <p>Только бесплатные сервисы (GitHub Pages, GitHub Actions), никаких платных
-    подписок и cookie-баннеров. Сайт открыт: исходники витрины —
-    <a href="https://github.com/dziominpavel/dziominpavel.github.io" rel="noopener">репозиторий
-    dziominpavel.github.io</a>. Код самих приложений тоже открыт.</p>
+    <h2>Обо мне</h2>
+    <div class="author">
+      <img class="author-avatar" src="{root}static/img/avatar.jpg"
+           alt="Фото автора проекта" width="128" height="128">
+      <div class="author-text">
+        <p>Разрабатываю приложения и превращаю личные задачи в готовые продукты.
+        Всё, что вы видите в каталоге, начиналось с собственной необходимости:
+        удобный инструмент рождался для себя, а потом становился приложением,
+        которым пользуются другие.</p>
+        <p>Все проекты открыты: исходный код, релизы и сборки доступны каждому.
+        Открыт к сотрудничеству: идеи, предложения и вопросы приветствуются.</p>
+      </div>
+    </div>
     <h2>Связаться</h2>
-    <p>Вопросы и идеи — через <a href="https://github.com/dziominpavel" rel="noopener">профиль
-    на GitHub</a>.</p>"""
+    <ul class="contacts">
+      <li><a href="https://t.me/Dziomin" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg><span>Telegram</span></a></li>
+      <li><a href="https://www.instagram.com/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg><span>Instagram</span></a></li>
+      <li><a href="https://www.linkedin.com/in/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg><span>LinkedIn</span></a></li>
+    </ul>"""
 
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#2563eb"/>
@@ -840,18 +836,21 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
              for kind, card in merged]
     cards_html = "\n".join(parts) or \
         "    <p class=\"empty\">Пока нет опубликованных приложений.</p>"
-    total = len(cards)
+    # Итог в сегменте «Все» — все карточки каталога (скачиваемые + web),
+    # чтобы цифра совпадала с числом записей реестра.
+    total = len(cards) + len(web_cards)
     n_android = sum(1 for c in cards if "android" in c["platforms"])
     n_windows = sum(1 for c in cards if "windows" in c["platforms"])
     # Сегмент Web: отдельный пункт фильтра для web-карточек (они видны
     # под «Все»/«Web» и скрыты под Android/Windows).
     web_filter = (
-        '\n      <button class="filter" type="button" data-filter="web">'
+        '\n        <button class="filter" type="button" data-filter="web">'
         f'Web <span class="filter-count">{len(web_cards)}</span></button>'
         if web_cards else "")
-    index = INDEX_TEMPLATE.format(cards=cards_html, total=total, android=n_android,
-                                  windows=n_windows, total_word=plural_apps(total),
-                                  all_count=total + len(web_cards),
+    # Счётчики — единственное место с разбивкой по платформам (полосы
+    # статистики в hero больше нет, чтобы числа не дублировались).
+    index = INDEX_TEMPLATE.format(cards=cards_html, all_count=total,
+                                  android=n_android, windows=n_windows,
                                   web_filter=web_filter)
     write_page(os.path.join(out_dir, "index.html"),
                render_page(title="Мои приложения — каталог для скачивания",
@@ -918,8 +917,8 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
     # --- «О проекте» --------------------------------------------------------
     write_page(os.path.join(out_dir, "about", "index.html"),
                render_page(title="О проекте — Мои приложения",
-                           description="Как устроен бесплатный каталог приложений: "
-                                       "автосборка из GitHub Releases и открытый код.",
+                           description="О витрине «Мои приложения»: автор каталога, "
+                                       "открытые проекты и контакты для связи.",
                            canonical=f"{SITE_URL}/about/", content=ABOUT_TEMPLATE.format(root="../"),
                            root="../"))
     pages.append("about")

@@ -595,6 +595,47 @@ def test_render_home_sorted_by_date():
     print("ok: главная — единая лента по дате, новое сверху, старое внизу")
 
 
+def test_filter_counts_include_web():
+    """Фильтр в hero — единственный источник счётчиков, итог со всеми карточками."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        android = _fake_release_card("android-app", "2026-02-01T10:00:00Z", tmp)
+        windows = _fake_release_card("windows-app", "2026-03-01T10:00:00Z", tmp)
+        android["platforms"] = {"android": android["platforms"]["windows"]}
+        web_cards = [_fake_web_card("web-one", "2026-01-02", tmp),
+                     _fake_web_card("web-two", "2026-01-03", tmp)]
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site([android, windows], web_cards, out)
+            with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+                home = fh.read()
+            # полосы статистики больше нет — числа не дублируются
+            assert "hero-stats" not in home and "stat-num" not in home, home
+            # фильтр живёт внутри hero и несёт все счётчики
+            hero = home[home.index('<section class="hero"'):home.index("</section>")]
+            assert '<div class="filters"' in hero, hero
+            # итог = 4 карточки (2 скачиваемых + 2 web), а не 2
+            assert 'data-filter="all">Все <span class="filter-count">4</span>' in hero, hero
+            assert 'data-filter="android">Android ' \
+                   '<span class="filter-count">1</span>' in hero, hero
+            assert 'data-filter="windows">Windows ' \
+                   '<span class="filter-count">1</span>' in hero, hero
+            assert 'data-filter="web">Web <span class="filter-count">2</span>' in hero, hero
+
+            # без web-записей: итог = число скачиваемых, сегмента Web нет
+            out2 = os.path.join(tmp, "site-no-web")
+            render_site([android, windows], [], out2)
+            with open(os.path.join(out2, "index.html"), encoding="utf-8") as fh:
+                home2 = fh.read()
+            assert 'data-filter="all">Все <span class="filter-count">2</span>' in home2, home2
+            assert 'data-filter="web"' not in home2, home2
+        finally:
+            os.chdir(cwd)
+    print("ok: фильтр в hero — счётчики со всеми карточками, полосы статистики нет")
+
+
 if __name__ == "__main__":
     test_validate_ok()
     test_validate_broken_no_crash()
@@ -609,4 +650,5 @@ if __name__ == "__main__":
     test_fetch_path_commit_date()
     test_data_updated_consistency()
     test_render_home_sorted_by_date()
+    test_filter_counts_include_web()
     print("ALL PASS")

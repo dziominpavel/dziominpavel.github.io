@@ -190,16 +190,11 @@ p { margin: 0 0 var(--sp-3); }
 }
 
 .brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
-  background: var(--grad-cta);
-  color: #fff;
-  font-size: 15px;
-  font-weight: 800;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
   box-shadow: var(--shadow-1);
 }
 
@@ -325,6 +320,26 @@ p { margin: 0 0 var(--sp-3); }
   padding: var(--sp-6) 0 var(--sp-8);
 }
 
+/* min-width:0 — при двух колонках текст сжимается и переносится,
+ * а не выталкивает фильтр за пределы hero */
+.hero-text { min-width: 0; }
+
+.hero-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+
+.hero-logo {
+  width: 96px;
+  height: 96px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
 .hero h1 {
   font-size: var(--fs-2xl);
   margin-bottom: var(--sp-3);
@@ -335,47 +350,23 @@ p { margin: 0 0 var(--sp-3); }
   width: fit-content;
 }
 
-.hero-stats {
-  display: flex;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  width: fit-content;
-  max-width: 100%;
-  box-sizing: border-box;
-}
+/* внутри flex-строки отступ снизу задаёт сама строка, а не h1 */
+.hero-title h1 { margin-bottom: 0; }
 
-.hero-stats li {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--sp-3) var(--sp-4);
-}
-
-.hero-stats li + li { border-left: 1px solid var(--border); }
-
-.stat-num {
-  font-size: var(--fs-xl);
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.stat-label {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
+/* Фильтр живёт внутри hero (правая колонка) и служит единственной
+ * полосой статистики: счётчики сегментов = разбивка каталога. */
+.hero .filters { margin: 0; justify-self: start; }
 
 @media (min-width: 768px) {
-  .hero { grid-template-columns: 1fr auto; padding: var(--sp-8) 0; }
+  .hero { padding: var(--sp-8) 0; }
   .hero h1 { font-size: var(--fs-3xl); }
-  .hero-stats li { padding: var(--sp-3) var(--sp-6); }
+}
+
+/* Правая колонка только когда места хватает на фильтр целиком: уже
+ * 1024 px сегмент-группа переносилась бы второй строкой. */
+@media (min-width: 1024px) {
+  .hero { grid-template-columns: 1fr auto; }
+  .hero .filters { justify-self: end; }
 }
 
 /* --- сегментированный фильтр --------------------------------------------- */
@@ -384,7 +375,6 @@ p { margin: 0 0 var(--sp-3); }
   display: inline-flex;
   gap: var(--sp-1);
   padding: var(--sp-1);
-  margin: 0 0 var(--sp-6);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
@@ -794,3 +784,67 @@ p { margin: 0 0 var(--sp-3); }
 /* --- страница «О проекте» --------------------------------------------------- */
 
 .about-body { max-width: 68ch; }
+
+/* блок «Обо мне»: круглое фото (как в мессенджерах) + текст рядом */
+.author {
+  display: flex;
+  gap: var(--sp-5);
+  align-items: flex-start;
+}
+
+.author-avatar {
+  width: 128px;
+  height: 128px;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.author-text { min-width: 0; }
+.author-text p:last-child { margin-bottom: 0; }
+
+@media (max-width: 560px) {
+  .author { flex-direction: column; gap: var(--sp-4); }
+}
+
+/* контакты: пилюли-ссылки с иконками */
+.contacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.contacts a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: var(--fs-base);
+  transition: transform var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.contacts a:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.contacts svg { flex: none; color: var(--accent); }
+
+/* узкий экран: логотип hero ужимается, чтобы заголовок не распирал строку */
+@media (max-width: 480px) {
+  .hero-logo { width: 64px; height: 64px; }
+}
