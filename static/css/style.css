@@ -781,6 +781,40 @@ p { margin: 0 0 var(--sp-3); }
   transform: translateY(-2px);
 }
 
+/* --- секция «Что нового» ---------------------------------------------------- */
+
+/* тело релиза: карточка-поверхность в стиле .requirements */
+.whats-new {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.whats-new h2 { margin-top: 0; }
+
+/* жирные метки категорий из тела релиза */
+.whats-new h3 {
+  font-size: var(--fs-base);
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+
+.whats-new h3:first-of-type { margin-top: 0; }
+
+.whats-new ul {
+  margin: 0;
+  padding-left: 1.25em;
+}
+
+.whats-new p {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-base);
+}
+
+.whats-new p:last-child { margin-bottom: 0; }
+
+.whats-new .sources { margin: var(--sp-3) 0 0; }
+
 /* --- страница «О проекте» --------------------------------------------------- */
 
 .about-body { max-width: 68ch; }

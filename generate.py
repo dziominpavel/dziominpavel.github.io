@@ -152,7 +152,11 @@ def fetch_latest_release(repo: str, token: str | None = None) -> dict | None:
 
 
 def release_card(entry: dict, release: dict) -> dict:
-    """Карточка данных из релиза: версия, размер, дата, ссылки, счётчик."""
+    """Карточка данных из релиза: версия, размер, дата, ссылки, счётчик.
+
+    notes — тело релиза (краткий пользовательский блок изменений из
+    секции changelog); источник секции «Что нового» на странице.
+    """
     assets = release.get("assets") or []
     return {
         "slug": entry["slug"],
@@ -163,6 +167,7 @@ def release_card(entry: dict, release: dict) -> dict:
         "downloads": sum(int(a.get("download_count") or 0) for a in assets),
         "url": release.get("html_url"),
         "assets": assets,
+        "notes": release.get("body") or "",
     }
 
 
@@ -637,6 +642,58 @@ def gallery_html(card: dict) -> str:
 ' + "\n      ".join(items) + "\n      </div>\n    </section>"
 
 
+# Тело релиза: жирная метка категории целиком -> заголовок блока, буллет ->
+# элемент списка, прочие строки -> абзацы (исторические релизы со свободной
+# прозой). Всё экранируется: тело — данные внешнего источника.
+_LABEL_RE = re.compile(r"^\*\*([^*]+)\*\*$")
+_BULLET_RE = re.compile(r"^-\s+(\S.*)$")
+
+
+def notes_body_html(notes: str) -> str:
+    """Тело релиза в HTML: h3 для меток, ul для буллетов, p для прозы."""
+    blocks: list[str] = []
+    bullets: list[str] = []
+
+    def flush() -> None:
+        nonlocal bullets
+        if bullets:
+            items = "\n        ".join(f"<li>{esc(b)}</li>" for b in bullets)
+            blocks.append(f"<ul>\n        {items}\n      </ul>")
+            bullets = []
+
+    for line in str(notes or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        label = _LABEL_RE.match(stripped)
+        if label:
+            flush()
+            blocks.append(f"<h3>{esc(label.group(1))}</h3>")
+            continue
+        bullet = _BULLET_RE.match(stripped)
+        if bullet:
+            bullets.append(bullet.group(1).strip())
+            continue
+        flush()
+        blocks.append(f"<p>{esc(stripped)}</p>")
+    flush()
+    return "\n      ".join(blocks)
+
+
+def whats_new_html(card: dict) -> str:
+    """Секция «Что нового»: тело последнего релиза + ссылка на все релизы."""
+    notes = card.get("notes") or ""
+    if not notes.strip():
+        return ""
+    body = notes_body_html(notes)
+    if not body:
+        return ""
+    return (f'<section class="whats-new">\n      <h2>Что нового в '
+            f'{esc(card["version"])}</h2>\n      {body}\n      '
+            f'<p class="sources"><a href="https://github.com/{esc(card["repo"])}/releases" '
+            f'rel="noopener">Все изменения</a></p>\n    </section>')
+
+
 def windows_notice_html(card: dict) -> str:
     if "windows" not in card["platforms"]:
         return ""
@@ -729,6 +786,7 @@ APP_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / 
         </header>
         <p class="app-desc">{description}</p>
         {requirements}
+        {whats_new}
         {gallery}
       </div>
       <aside class="download" aria-label="Скачивание">
@@ -876,6 +934,7 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
             downloads=f"{card['downloads']:,}",
             description=esc(store["description"]),
             requirements=requirements,
+            whats_new=whats_new_html(card),
             notice=windows_notice_html(card),
             buttons=buttons_html(card, big=True),
             repo_url=esc(f"https://github.com/{card['repo']}"),
@@ -962,7 +1021,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.json:
             slim = [{k: v for k, v in card.items()
-                     if k not in ("store", "project_dir", "assets", "screenshots")}
+                     if k not in ("store", "project_dir", "assets", "screenshots",
+                                  "notes")}
                     | {"platforms": {p: [a["name"] for a in variants]
                                      for p, variants in card["platforms"].items()}}
                     for card in cards]

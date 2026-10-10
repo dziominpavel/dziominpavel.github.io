@@ -174,6 +174,7 @@ def test_release_card_json():
         "tag_name": "v1.5.1",
         "published_at": "2026-09-23T20:00:00Z",
         "html_url": "https://github.com/dziominpavel/FogMap/releases/tag/v1.5.1",
+        "body": "**Добавлено**\n- Экспорт треков в GPX",
         "assets": [
             {"name": "FogMap-1.5.1.apk", "size": 64369516, "download_count": 7,
              "browser_download_url": "https://github.com/.../FogMap-1.5.1.apk"},
@@ -186,7 +187,10 @@ def test_release_card_json():
     assert card["downloads"] == 7
     assert card["url"].endswith("v1.5.1")
     assert card["assets"][0]["browser_download_url"].endswith(".apk")
-    print("ok: JSON карточки (версия, размер, дата, ссылки, счётчик)")
+    assert card["notes"] == "**Добавлено**\n- Экспорт треков в GPX"
+    # без body -> пустая строка, а не None (секция «Что нового» просто не выводится)
+    assert release_card(entry, {"tag_name": "v1.0.0"})["notes"] == ""
+    print("ok: JSON карточки (версия, размер, дата, ссылки, счётчик, notes)")
 
 
 def _fake_web_clone(repo: str, dest: str, token=None) -> bool:
@@ -380,7 +384,7 @@ def test_sort_by_date_desc():
     print("ok: sort_by_date — по убыванию даты, без даты в конец, без мутаций")
 
 
-def _fake_release_card(slug: str, date, project_dir: str) -> dict:
+def _fake_release_card(slug: str, date, project_dir: str, notes: str = "") -> dict:
     """Минимальная карточка скачиваемого приложения для рендера в песочнице."""
     return {
         "slug": slug, "repo": f"demo/{slug}", "version": "1.0.0", "size": 1000,
@@ -389,6 +393,7 @@ def _fake_release_card(slug: str, date, project_dir: str) -> dict:
                     "browser_download_url": "https://example.com/x.zip"}],
         "store": {"name": slug.capitalize(), "description": "Описание приложения."},
         "icon_missing": False, "screenshots": [], "project_dir": project_dir,
+        "notes": notes,
         "platforms": {"windows": [{"name": f"{slug}.zip", "size": 1000,
                                    "browser_download_url": "https://example.com/x.zip"}]},
     }
@@ -636,6 +641,97 @@ def test_filter_counts_include_web():
     print("ok: фильтр в hero — счётчики со всеми карточками, полосы статистики нет")
 
 
+def test_notes_body_render():
+    """Секция «Что нового»: метки/буллеты/проза, пустое тело, экранирование."""
+    from generate import notes_body_html, whats_new_html
+
+    # метки -> h3, буллеты -> ul, проза -> p; порядок сохраняется
+    body = notes_body_html(
+        "**Добавлено**\n- Экспорт в GPX\n- Тёмная тема\n"
+        "\n**Исправлено**\n- Падение при пустом треке\n"
+        "Историческая секция без категорий.\n")
+    assert "<h3>Добавлено</h3>" in body, body
+    assert body.count("<ul>") == 2, body  # по одному списку на каждый блок меток
+    assert "<li>Экспорт в GPX</li>" in body and "<li>Тёмная тема</li>" in body, body
+    assert "<h3>Исправлено</h3>" in body and "<li>Падение при пустом треке</li>" in body, body
+    assert "<p>Историческая секция без категорий.</p>" in body, body
+    # порядок: метка идёт раньше списка, проза в конце
+    assert body.index("<h3>Добавлено</h3>") < body.index("<ul>"), body
+    assert body.index("<ul>") < body.index("<h3>Исправлено</h3>"), body
+
+    # проза без меток и буллетов (исторический релиз) -> только абзацы
+    prose = notes_body_html("Первая версия.\nЕщё пара строк без разметки.")
+    assert prose == ("<p>Первая версия.</p>\n      "
+                     "<p>Ещё пара строк без разметки.</p>"), prose
+
+    # экранирование: разметка тела выводится как текст
+    xss = notes_body_html("- <script>alert(1)</script> & \"цитата\"")
+    assert "&lt;script&gt;" in xss and "&amp;" in xss and "&quot;" in xss, xss
+    assert "<script>" not in xss, xss
+
+    # пустое тело / пробелы -> пустая строка
+    assert notes_body_html("") == ""
+    assert notes_body_html("  \n \n") == ""
+
+    # секция: заголовок с версией + ссылка «Все изменения»
+    card = {"version": "1.5.2", "repo": "dziominpavel/FogMap",
+            "notes": "**Добавлено**\n- Экспорт в GPX"}
+    section = whats_new_html(card)
+    assert "Что нового в 1.5.2" in section, section
+    assert 'href="https://github.com/dziominpavel/FogMap/releases"' in section, section
+    assert ">Все изменения</a>" in section, section
+    assert "<li>Экспорт в GPX</li>" in section, section
+
+    # пустое или отсутствующее тело -> секции нет
+    assert whats_new_html({**card, "notes": ""}) == ""
+    assert whats_new_html({"version": "1.0.0", "repo": "demo/x"}) == ""
+    print("ok: тело релиза — метки/буллеты/проза, экранирование, пустое тело")
+
+
+def test_whats_new_on_app_page():
+    """Секция «Что нового» — на странице приложения, в позиции и без неё."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _fake_release_card("alpha", "2026-05-01T10:00:00Z", tmp,
+                                 notes="**Добавлено**\n- Экспорт в GPX")
+        app["store"]["requirements"] = "Android 8+"
+        # скриншот, чтобы на странице была галерея — проверяем позицию секции
+        os.makedirs(os.path.join(tmp, "screenshots"), exist_ok=True)
+        with open(os.path.join(tmp, "screenshots", "shot1.png"), "wb") as fh:
+            fh.write(b"\x89PNG fake")
+        app["screenshots"] = ["shot1.png"]
+        empty = _fake_release_card("beta", "2026-04-01T10:00:00Z", tmp, notes="")
+        web_cards = [_fake_web_card("web-one", "2026-01-02", tmp)]
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site([app, empty], web_cards, out)
+        finally:
+            os.chdir(cwd)
+        with open(os.path.join(out, "alpha", "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        # секция есть и стоит после описания/требований, перед галереей
+        assert 'class="whats-new"' in page, page
+        assert page.index('class="app-desc"') < page.index('class="requirements"') \
+            < page.index('class="whats-new"') < page.index('class="gallery"'), "порядок блоков"
+        assert ">Все изменения</a>" in page, page
+        # пустое тело -> секции нет, страница в остальном полная
+        with open(os.path.join(out, "beta", "index.html"), encoding="utf-8") as fh:
+            empty_page = fh.read()
+        assert "whats-new" not in empty_page, empty_page
+        assert 'class="app-desc"' in empty_page and 'class="download"' in empty_page, empty_page
+        # главная и web-страница — без секции
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        assert "whats-new" not in home, home
+        with open(os.path.join(out, "apps", "web-one", "index.html"),
+                  encoding="utf-8") as fh:
+            web_page = fh.read()
+        assert "whats-new" not in web_page, web_page
+    print("ok: секция «Что нового» — на странице приложения в позиции, в других местах нет")
+
+
 if __name__ == "__main__":
     test_validate_ok()
     test_validate_broken_no_crash()
@@ -651,4 +747,6 @@ if __name__ == "__main__":
     test_data_updated_consistency()
     test_render_home_sorted_by_date()
     test_filter_counts_include_web()
+    test_notes_body_render()
+    test_whats_new_on_app_page()
     print("ALL PASS")
