@@ -16,6 +16,12 @@
    сверка с секциями не выполняется (версия заморожена).
 5. Подсказка: есть ли накопленные пункты в `[Unreleased]` (решение о бампе
    принимается по ним, а не по списку изменённых путей).
+6. Верхний блок секции `[Unreleased]` — часть выше первой строки `###` — по
+   формат-контракту гейта release-скрипта: каждая непустая строка блока либо
+   жирная метка `**…**`, либо буллет; в блоке ≥1 буллет; строка ≤140
+   символов; символ '`' запрещён; секция с пунктами не начинается с `###`.
+   Пустая секция (нет пунктов) не проверяется — это подсказка NO_BUMP.
+   Версионные секции, включая исторические, не проверяются.
 
 Код возврата: 0 — ок, 1 — ошибка.
 """
@@ -104,6 +110,69 @@ def unreleased_items(changelog_text: str) -> list[str]:
     return items
 
 
+def unreleased_block_problems(text: str) -> list[str]:
+    """Проблемы верхнего блока секции [Unreleased] по формат-контракту.
+
+    Контракт зеркалит Get-NotesBlockProblems из release.ps1 (гейт -Prepare):
+    непустая строка блока — жирная метка '**…**' либо буллет '- …'; в блоке
+    ≥1 буллет; строка ≤140 символов (сырая, как в гейте); символ '`'
+    запрещён; секция с пунктами не начинается с '###' (блок обязателен).
+    Пустая секция (нет пунктов) не проверяется — это подсказка NO_BUMP, а не
+    ошибка. Проверяется только [Unreleased]: версионные секции, включая
+    исторические, контракту верхнего блока не подлежат.
+    """
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if ANY_HEAD.match(s):
+            if UNRELEASED_HEAD.match(s):
+                start = i + 1
+            break
+    if start is None:
+        return []
+    section: list[str] = []
+    for line in lines[start:]:
+        s = line.strip()
+        if ANY_HEAD.match(s):
+            break
+        section.append(line)
+    # Пункты секции — как в гейте: непустые строки, кроме '###'-категорий.
+    if not [s for s in (ln.strip() for ln in section) if s and not s.startswith("###")]:
+        return []
+    # Блок — всё до первой строки '###' (как Get-ReleaseNotes, но без
+    # обрезки пустых краёв: их отсутствие и есть «блок пуст»).
+    block: list[str] = []
+    for line in section:
+        if line.startswith("###"):
+            break
+        block.append(line)
+    problems: list[str] = []
+    if not any(ln.strip() for ln in block):
+        problems.append("нет верхнего блока: секция с пунктами начинается с ###")
+        return problems
+    has_bullet = False
+    for raw in block:
+        s = raw.strip()
+        if not s:
+            continue
+        is_label = bool(re.match(r"^\*\*[^*]+\*\*$", s))
+        is_bullet = bool(re.match(r"^-\s+\S", s))
+        if is_bullet:
+            has_bullet = True
+        if not is_label and not is_bullet:
+            problems.append(f"не жирная метка и не буллет: {raw}")
+            continue
+        if len(raw) > 140:
+            problems.append(f"строка длиннее 140 символов ({len(raw)}): {raw}")
+            continue
+        if "`" in raw:
+            problems.append(f"символ ```'``` запрещён внутри блока: {raw}")
+    if not has_bullet:
+        problems.append("в блоке нет ни одного буллета")
+    return problems
+
+
 def check_changelog(changelog: Path, res: Result) -> tuple[str | None, str | None]:
     """Проверяет структуру changelog. Возвращает (текст, верхняя версионная секция)."""
     if not changelog.exists():
@@ -161,6 +230,9 @@ def check_project(
 
     text, head = check_changelog(project_dir / changelog_name, res)
     print_unreleased_hint(text)
+    if text is not None:
+        for problem in unreleased_block_problems(text):
+            res.fail(f"{changelog_name}: блок [Unreleased]: {problem}")
 
     if track == "static":
         if version_file:
@@ -295,4 +367,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # Консоль Windows (cp1251) не должна падать на символах из текста
+    # changelog (например, '≤'): заменяем их '?', код возврата не страдает.
+    sys.stdout.reconfigure(errors="replace")
     sys.exit(main(sys.argv[1:]))
