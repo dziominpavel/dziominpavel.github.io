@@ -286,6 +286,89 @@ def test_prepare_levels() -> None:
             cleanup(app)
 
 
+def test_prepare_refuses_malformed_block() -> None:
+    """Гейт формата блока: проза, строка >140, '`', метки без буллета -> отказ.
+
+    Во всех случаях: отказ до записи файлов (version и CHANGELOG.md без
+    изменений), в выводе — текст отвергнутого блока и пометка о том, что это
+    увидят пользователи релиза.
+    """
+    cases = [
+        ("проза вместо блока",
+         "Обычный связный текст без единого маркера — вот так выглядит плохое саммари.\n"),
+        ("строка длиннее 140",
+         "- " + "x" * 140 + "\n"),
+        ("запрещённый символ '`'",
+         "- Сборка: `pip install` ускорена вдвое.\n"),
+        ("метки без буллетов",
+         "**Добавлено**\n\n**Исправлено**\n"),
+    ]
+    for name, bad_block in cases:
+        body = bad_block + "\n### Исправлено\n- Фикс\n"
+        app = make_fixture(body)
+        try:
+            rc, out = run_release(app, "-Prepare")
+            fragment = bad_block.strip().split("\n")[0]
+            check(f"гейт: {name} -> отказ", rc == 1, out)
+            check(f"гейт: {name}: версия не изменена",
+                  (app / "version").read_text(encoding="utf-8").strip() == "1.5.2")
+            check(f"гейт: {name}: changelog не изменён",
+                  (app / "CHANGELOG.md").read_text(encoding="utf-8") == changelog(body))
+            check(f"гейт: {name}: печатает текст блока и адресата",
+                  fragment in out and "пользователи релиза" in out
+                  and "формат-контракт" in out, out)
+        finally:
+            cleanup(app)
+
+
+def test_prepare_accepts_valid_block() -> None:
+    """Валидный блок сворачивается в версионную секцию — включая длинный.
+
+    Блок из девяти буллетов (>5 строк) проходит: старой нормы «2–5 строк»
+    больше нет, ограничение — структура, а не счётчик строк.
+    """
+    cases = [
+        ("метки + буллеты -> свёртка",
+         "**Добавлено**\n- Экспорт в CSV готов.\n\n**Исправлено**\n- Виджет не мигает.\n"),
+        ("девять буллетов -> свёртка",
+         "".join(f"- Пункт номер {i} из семи+.\n" for i in range(1, 10))),
+    ]
+    for name, top_block in cases:
+        body = top_block + "\n### Добавлено\n- Описание фичи: change-id.\n"
+        app = make_fixture(body)
+        try:
+            rc, out = run_release(app, "-Prepare")
+            version = (app / "version").read_text(encoding="utf-8").strip()
+            text = (app / "CHANGELOG.md").read_text(encoding="utf-8")
+            check(name, rc == 0 and version == "1.6.0", f"rc={rc} version={version} {out}")
+            check(f"{name}: секция свёрнута под заголовок",
+                  "## [1.6.0]" in text and top_block.strip().split("\n")[0] in text, text)
+        finally:
+            cleanup(app)
+
+
+def test_prepare_levels_bold_labels() -> None:
+    """Классификатор опознаёт жирные метки блока (без строк '###').
+
+    Секция без '###'-категорий: раньше такое падало в «категории не
+    распознаны» -> MINOR, теперь '**Исправлено**' -> PATCH.
+    """
+    cases = [
+        ("**Исправлено** -> PATCH", "**Исправлено**\n- Мигалка больше не моргает.\n", "1.5.3"),
+        ("**Добавлено** -> MINOR", "**Добавлено**\n- Экспорт в CSV готов.\n", "1.6.0"),
+        ("BREAKING -> MAJOR", "**Изменено**\n- **BREAKING:** смена формата файла.\n", "2.0.0"),
+    ]
+    for name, body, expected in cases:
+        app = make_fixture(body)
+        try:
+            rc, out = run_release(app, "-Prepare")
+            version = (app / "version").read_text(encoding="utf-8").strip()
+            check(name, rc == 0 and version == expected,
+                  f"rc={rc} version={version} ожидалось {expected} {out}")
+        finally:
+            cleanup(app)
+
+
 def test_prepare_has_no_side_effects() -> None:
     app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
     try:
@@ -487,6 +570,9 @@ def main() -> int:
     test_prepare_refuses_missing_summary()
     test_prepare_refuses_dirty_tree()
     test_prepare_levels()
+    test_prepare_levels_bold_labels()
+    test_prepare_refuses_malformed_block()
+    test_prepare_accepts_valid_block()
     test_prepare_has_no_side_effects()
     test_publish_refuses_without_prepare()
     test_publish_refuses_dirty_files()
