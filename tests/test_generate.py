@@ -18,9 +18,12 @@ import urllib.error
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from generate import (  # noqa: E402
+    MAX_RELEASE_PAGES,
     SITE_URL,
+    collect_projects,
     collect_web_projects,
     detect_platforms,
+    fetch_all_releases,
     fetch_path_commit_date,
     fetch_web_commit_date,
     fmt_date,
@@ -30,6 +33,7 @@ from generate import (  # noqa: E402
     release_card,
     render_site,
     sort_by_date,
+    sum_download_count,
     validate_project,
 )
 
@@ -180,17 +184,17 @@ def test_release_card_json():
              "browser_download_url": "https://github.com/.../FogMap-1.5.1.apk"},
         ],
     }
-    card = release_card(entry, release)
+    card = release_card(entry, release, 535)  # downloads — агрегат за всё приложение
     assert card["version"] == "1.5.1"
     assert card["size"] == 64369516
     assert card["date"] == "2026-09-23T20:00:00Z"
-    assert card["downloads"] == 7
+    assert card["downloads"] == 535  # берётся из агрегата, а не суммы ассетов (7)
     assert card["url"].endswith("v1.5.1")
     assert card["assets"][0]["browser_download_url"].endswith(".apk")
     assert card["notes"] == "**Добавлено**\n- Экспорт треков в GPX"
     # без body -> пустая строка, а не None (секция «Что нового» просто не выводится)
-    assert release_card(entry, {"tag_name": "v1.0.0"})["notes"] == ""
-    print("ok: JSON карточки (версия, размер, дата, ссылки, счётчик, notes)")
+    assert release_card(entry, {"tag_name": "v1.0.0"}, 0)["notes"] == ""
+    print("ok: JSON карточки (версия, размер, дата, ссылки, агрегат-счётчик, notes)")
 
 
 def _fake_web_clone(repo: str, dest: str, token=None) -> bool:
@@ -732,6 +736,119 @@ def test_whats_new_on_app_page():
     print("ok: секция «Что нового» — на странице приложения в позиции, в других местах нет")
 
 
+def _fake_valid_clone(repo: str, dest: str, token=None) -> bool:
+    """Валидный контракт по пути клона: store.yaml, иконка, 3 скриншота."""
+    os.makedirs(os.path.join(dest, "assets"), exist_ok=True)
+    with open(os.path.join(dest, "assets", "icon.png"), "wb") as fh:
+        fh.write(b"\x89PNG fake")
+    os.makedirs(os.path.join(dest, "screenshots"), exist_ok=True)
+    for i in range(3):
+        with open(os.path.join(dest, "screenshots", f"shot{i + 1}.png"), "wb") as fh:
+            fh.write(b"\x89PNG fake")
+    with open(os.path.join(dest, "store.yaml"), "w", encoding="utf-8") as fh:
+        fh.write("name: FogMap\ndescription: Трекер\nicon: assets/icon.png\n")
+    return True
+
+
+def test_fetch_all_releases_pagination_draft_and_failure():
+    """1.1: пагинация, фильтр draft (prerelease остаётся), отказ -> None, лимит страниц."""
+    import generate as gen
+    orig_api = gen.github_api
+    try:
+        # а) страница из 100 -> идём на вторую; короткая (2) -> стоп.
+        #    draft исключается, prerelease остаётся.
+        page1 = [{"draft": False, "assets": [{"download_count": 1}]}
+                 for _ in range(100)]
+        page2 = [
+            {"draft": False, "prerelease": True, "assets": [{"download_count": 7}]},
+            {"draft": True, "assets": [{"download_count": 99}]},
+        ]
+        gen.github_api = lambda path, token=None: (
+            page1 if path.endswith("page=1") else page2)
+        releases = fetch_all_releases("demo/Repo")
+        assert len(releases) == 101, len(releases)  # 100 + 1 prerelease, draft мимо
+        assert all(not r.get("draft") for r in releases)
+        assert any(r.get("prerelease") for r in releases)
+        assert sum_download_count(releases) == 107  # 100*1 + 7, НЕ +99 (draft)
+
+        # б) ошибка HTTP -> None (маркет отказа, сборка не падает)
+        def boom(path, token=None):
+            raise urllib.error.HTTPError(path, 500, "err", None, None)
+        gen.github_api = boom
+        assert fetch_all_releases("demo/Repo") is None
+
+        # в) битый JSON -> None
+        def bad_json(path, token=None):
+            raise json.JSONDecodeError("x", "y", 0)
+        gen.github_api = bad_json
+        assert fetch_all_releases("demo/Repo") is None
+
+        # г) граница лимита: все страницы полные -> ровно MAX_RELEASE_PAGES запросов
+        gen.github_api = lambda path, token=None: [
+            {"draft": False, "assets": [{"download_count": 1}]}
+            for _ in range(100)]
+        releases = fetch_all_releases("demo/Repo")
+        assert len(releases) == 100 * MAX_RELEASE_PAGES, len(releases)
+    finally:
+        gen.github_api = orig_api
+    print("ok: fetch_all_releases — пагинация, фильтр draft, отказ -> None, лимит")
+
+
+def test_sum_download_count_multiple_releases():
+    """1.2: сумма download_count по всем ассетам всех релизов."""
+    releases = [
+        {"assets": [{"download_count": 500}, {"download_count": 20}]},
+        {"assets": [{"download_count": 30}]},
+        {"assets": []},  # релиз без ассетов -> вклад 0
+        {},              # релиз вовсе без ключа assets -> вклад 0
+    ]
+    assert sum_download_count(releases) == 550
+    assert sum_download_count([]) == 0
+    print("ok: sum_download_count — сумма по всем релизам и ассетам")
+
+
+def test_collect_downloads_aggregate_and_fallback():
+    """1.3: downloads из агрегата всех релизов; при отказе списка -> счёт последнего."""
+    import generate as gen
+    entry = {"slug": "fogmap", "repo": "dziominpavel/FogMap"}
+    latest = {
+        "tag_name": "v2.0.0", "published_at": "2026-05-01T00:00:00Z",
+        "html_url": "https://github.com/x/releases/tag/v2.0.0", "body": "",
+        "assets": [{"name": "FogMap-2.0.0.apk", "size": 10, "download_count": 5,
+                    "browser_download_url": "u"}],
+    }
+    # агрегат приходит уже без draft (фильтр — в fetch_all_releases):
+    # 500 (старый) + 30 (prerelease) + 5 (последний) = 535
+    aggregated = [
+        {"draft": False, "assets": [{"download_count": 500}]},
+        {"draft": False, "prerelease": True, "assets": [{"download_count": 30}]},
+        {"draft": False, "assets": [{"download_count": 5}]},
+    ]
+    orig = (gen.clone_project, gen.fetch_latest_release, gen.fetch_all_releases)
+    try:
+        gen.clone_project = _fake_valid_clone
+        gen.fetch_latest_release = lambda repo, token=None: latest
+
+        # а) агрегат по всем релизам -> 535, версия/дата из latest
+        gen.fetch_all_releases = lambda repo, token=None: aggregated
+        with tempfile.TemporaryDirectory() as tmp:
+            cards = collect_projects([entry], workdir=tmp)
+            assert cards[0]["downloads"] == 535, cards[0]["downloads"]
+            assert cards[0]["version"] == "2.0.0"
+            assert cards[0]["date"] == "2026-05-01T00:00:00Z"
+
+        # б) список релизов недоступен -> fallback на счёт последнего (5) + WARN
+        gen.fetch_all_releases = lambda repo, token=None: None
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                cards = collect_projects([entry], workdir=tmp)
+            assert cards[0]["downloads"] == 5, cards[0]["downloads"]
+            assert "WARN" in err.getvalue() and "fogmap" in err.getvalue()
+    finally:
+        gen.clone_project, gen.fetch_latest_release, gen.fetch_all_releases = orig
+    print("ok: downloads — агрегат по всем релизам, fallback на последний при сбое")
+
+
 if __name__ == "__main__":
     test_validate_ok()
     test_validate_broken_no_crash()
@@ -749,4 +866,7 @@ if __name__ == "__main__":
     test_filter_counts_include_web()
     test_notes_body_render()
     test_whats_new_on_app_page()
+    test_fetch_all_releases_pagination_draft_and_failure()
+    test_sum_download_count_multiple_releases()
+    test_collect_downloads_aggregate_and_fallback()
     print("ALL PASS")

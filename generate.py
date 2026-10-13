@@ -3,8 +3,9 @@
 
 Источники данных:
 - registry.yaml   — реестр проектов (слаг -> репозиторий);
-- GitHub API      — releases/latest: версия, размер, дата, ссылки,
-                    download_count (токен: переменная GITHUB_TOKEN);
+- GitHub API      — releases/latest: версия, размер, дата, ссылки;
+                    releases (все опубликованные): download_count за всё
+                    приложение (токен: переменная GITHUB_TOKEN);
 - git clone (deep=1) — store.yaml, иконка, screenshots/ каждого проекта.
 
 Инварианты (capabilities store-data-contract / store-catalog):
@@ -41,6 +42,10 @@ DATA_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
 REQUIRED_FIELDS = ("name", "description", "icon")
 FORBIDDEN_FIELDS = ("version", "platforms")
 GITHUB_API = "https://api.github.com"
+# Обход списка релизов для суммарного счётчика скачиваний (привязка к приложению):
+# ходим по /repos/{repo}/releases страницами, обрезая очень большие репозитории.
+RELEASES_PER_PAGE = 100
+MAX_RELEASE_PAGES = 10
 
 # Авто-детект платформ по маскам ассетов (D5): поле platforms не используется.
 PLATFORM_MASKS = (
@@ -151,11 +156,51 @@ def fetch_latest_release(repo: str, token: str | None = None) -> dict | None:
         return None
 
 
-def release_card(entry: dict, release: dict) -> dict:
-    """Карточка данных из релиза: версия, размер, дата, ссылки, счётчик.
+def fetch_all_releases(repo: str, token: str | None = None) -> list[dict] | None:
+    """Все опубликованные релизы репозитория для суммы скачиваний (привязка к приложению).
 
-    notes — тело релиза (краткий пользовательский блок изменений из
-    секции changelog); источник секции «Что нового» на странице.
+    Пропускает draft (не опубликован — его скачивания не считаются), берёт всё
+    остальное, включая prerelease. Обход постраничный, ограничен MAX_RELEASE_PAGES.
+    Возвращает None при ошибке сети/JSON/HTTP — вызывающий решает, что делать
+    (fallback на счёт последнего релиза); сборка не падает. Молчит: как и
+    fetch_path_commit_date, недоступность агрегата — не повод шуметь в логе.
+    """
+    releases: list[dict] = []
+    for page in range(1, MAX_RELEASE_PAGES + 1):
+        path = f"/repos/{repo}/releases?per_page={RELEASES_PER_PAGE}&page={page}"
+        try:
+            batch = github_api(path, token)
+        except urllib.error.HTTPError:
+            return None
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            return None
+        if not isinstance(batch, list):
+            return None
+        releases.extend(r for r in batch if not r.get("draft"))
+        if len(batch) < RELEASES_PER_PAGE:  # короткая страница — релизы кончились
+            break
+    return releases
+
+
+def sum_download_count(releases: list[dict]) -> int:
+    """Сумма download_count по всем ассетам переданных релизов (чистая функция).
+
+    Фильтр draft живёт в fetch_all_releases; здесь — только сложение счётчиков.
+    """
+    return sum(
+        int(asset.get("download_count") or 0)
+        for release in releases
+        for asset in (release.get("assets") or [])
+    )
+
+
+def release_card(entry: dict, release: dict, downloads: int) -> dict:
+    """Карточка данных из последнего релиза: версия, размер, дата, ссылки.
+
+    downloads — суммарный счётчик скачиваний приложения за все релизы,
+    вычисляется вызывающим (привязка к приложению, а не к последней версии).
+    notes — тело релиза (краткий пользовательский блок изменений из секции
+    changelog); источник секции «Что нового» на странице.
     """
     assets = release.get("assets") or []
     return {
@@ -164,7 +209,7 @@ def release_card(entry: dict, release: dict) -> dict:
         "version": (release.get("tag_name") or "").lstrip("v"),
         "size": sum(int(a.get("size") or 0) for a in assets),
         "date": release.get("published_at") or release.get("created_at"),
-        "downloads": sum(int(a.get("download_count") or 0) for a in assets),
+        "downloads": downloads,
         "url": release.get("html_url"),
         "assets": assets,
         "notes": release.get("body") or "",
@@ -281,7 +326,17 @@ def collect_projects(entries: list[dict], token: str | None = None,
         if not release or not release.get("assets"):
             print(f"[INFO] {slug}: релиза нет или он без ассетов — скрыт", file=sys.stderr)
             continue
-        card = release_card(entry, release)
+        # Счётчик скачиваний — за всё приложение (все опубликованные релизы),
+        # а не только за последний: привязка к приложению, не к версии.
+        all_releases = fetch_all_releases(repo, token)
+        if all_releases is None:
+            # Список релизов недоступен -> счёт по последнему релизу, без падения.
+            print(f"[WARN] {slug}: список релизов недоступен — счётчик по последнему релизу",
+                  file=sys.stderr)
+            downloads = sum_download_count([release])
+        else:
+            downloads = sum_download_count(all_releases)
+        card = release_card(entry, release, downloads)
         card["store"] = {k: v for k, v in store.items() if not k.startswith("_")}
         card["icon_missing"] = store.get("_icon_missing", False)
         card["screenshots"] = store.get("_screenshots") or []
