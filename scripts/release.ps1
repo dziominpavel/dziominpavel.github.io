@@ -37,7 +37,7 @@ param(
     [switch]$Major
 )
 
-$SCRIPT_VERSION = "1.4.0"
+$SCRIPT_VERSION = "1.4.2"
 Write-Host "release.ps1 v$SCRIPT_VERSION"
 
 function Fail([string]$Message) {
@@ -390,6 +390,19 @@ $TopFiles = @(Get-ChildItem -Path $DistDir -File)
 $Assets = @($TopFiles | Where-Object { $_.Extension -match '^\.(apk|zip|exe)$' })
 if ($Assets.Count -eq 0) {
     Fail "Папка dist/ пуста (нет ассетов .apk/.zip/.exe). Тег и релиз НЕ создаются."
+}
+# Ассет с чужой версией в имени не должен уехать в новый релиз: иначе zip/exe
+# публикуются как есть, а .apk молча переименовывается в версию выпуска —
+# пользователь получил бы прошлую сборку под именем свежей. Версия в имени
+# есть не у всех ассетов (FogMap-release-latest.apk) — запрещается только чужая.
+$staleAssets = @($Assets | Where-Object {
+    $found = @([regex]::Matches($_.Name, '(?<![\d.])\d+\.\d+\.\d+(?!\d)') | ForEach-Object { $_.Value })
+    $found.Count -gt 0 -and $found -notcontains $Version
+})
+if ($staleAssets.Count -gt 0) {
+    $staleNames = @($staleAssets | ForEach-Object { $_.Name }) -join ", "
+    Fail ("В dist/ остались ассеты другой версии: $staleNames. Выпускается $Version — " +
+        "пересоберите ассеты либо уберите старые в dist/archive. Тег и релиз НЕ создаются, ветка НЕ пушится.")
 }
 
 # --- 3. Иконка (поле icon в store.yaml) ------------------------------------
