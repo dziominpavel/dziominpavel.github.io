@@ -22,6 +22,6 @@
 
 ## 5. Коммит, валидация, архивация
 
-- [ ] 5.1 Закоммитить в корень `scripts/release.ps1`, `CHANGELOG.md` и артефакты change `openspec/changes/fix-release-asset-version/`, затем запушить. Верификация: `git status --porcelain` пуст, в сообщении коммита нет строк, начинающихся с `Generated with` или `Co-Authored-By:`.
-- [ ] 5.2 Выполнить `openspec validate --change fix-release-asset-version`. Верификация: exit 0 без ошибок валидации дельты `app-release-pipeline`.
-- [ ] 5.3 Архивировать change после приёмки. Верификация: change перенесён в `openspec/changes/archive/`, а в `openspec/specs/app-release-pipeline/spec.md` появился Requirement «Версия берётся из файла version» со сценарием «В dist/ остался ассет прошлой версии».
+- [x] 5.1 Закоммитить в корень `scripts/release.ps1`, `CHANGELOG.md` и артефакты change `openspec/changes/fix-release-asset-version/`, затем запушить. Верификация: `git status --porcelain` пуст, в сообщении коммита нет строк, начинающихся с `Generated with` или `Co-Authored-By:`. (Фактически в дереве остались чужие незакоммиченные `generate.py` и `openspec/changes/app-lifetime-download-counter/` — они в коммит не попали, staged ровно 7 файлов изменения.)
+- [x] 5.2 Выполнить `openspec validate fix-release-asset-version` (флаг `--change` у validate отсутствует). Верификация: exit 0 без ошибок валидации дельты `app-release-pipeline`.
+- [x] 5.3 Архивировать change после приёмки. Верификация: change перенесён в `openspec/changes/archive/`, а в `openspec/specs/app-release-pipeline/spec.md` появился Requirement «Версия берётся из файла version» со сценарием «В dist/ остался ассет прошлой версии».
