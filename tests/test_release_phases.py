@@ -211,6 +211,9 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
     write(app / "CHANGELOG.md", changelog(unreleased_body))
     write(app / "store.yaml", "name: Тест\nicon: icon.png\n")
     (app / "icon.png").write_bytes(b"\x89PNG fake")
+    # dist/ — локальный staging, как в реальных проектах (gitignored):
+    # сборка после -Prepare пересоздаёт ассеты без следов в git status.
+    write(app / ".gitignore", "dist/\n")
     dist = app / "dist"
     dist.mkdir()
     (dist / "app-1.5.2.apk").write_bytes(b"apk")
@@ -234,6 +237,24 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
 
 def cleanup(app: Path) -> None:
     shutil.rmtree(app.parent, ignore_errors=True)
+
+
+def rebuild_dist(app: Path) -> None:
+    """Эмуляция сборки после -Prepare: ассеты пересозданы под новую версию.
+
+    Реальные проекты собирают dist/ после бампа (gitignored staging), поэтому
+    публикация видит только свежие ассеты. Без вызова — в dist/ остаётся
+    app-1.5.2.apk и срабатывает гейт чужой версии (шаг 2 фазы публикации).
+    """
+    version = (app / "version").read_text(encoding="utf-8").strip()
+    dist = app / "dist"
+    for stale in dist.glob("*.apk"):
+        stale.unlink()
+    for stale in dist.glob("*.zip"):
+        stale.unlink()
+    for stale in dist.glob("*.exe"):
+        stale.unlink()
+    (dist / f"app-{version}.apk").write_bytes(b"apk")
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -408,6 +429,7 @@ def test_publish_refuses_dirty_files() -> None:
     try:
         rc, _ = run_release(app, "-Prepare")
         assert rc == 0
+        rebuild_dist(app)
         write(app / "notes.txt", "работа не закоммичена\n")
         rc, out = run_release(app)
         check("чужие изменения -> отказ", rc == 1 and "Незакоммиченные" in out, out)
@@ -422,6 +444,7 @@ def test_publish_refuses_version_desync() -> None:
     try:
         rc, _ = run_release(app, "-Prepare")
         assert rc == 0
+        rebuild_dist(app)
         (app / "version").write_text("9.9.9", encoding="ascii")
         rc, out = run_release(app)
         check("рассинхрон -> отказ", rc == 1 and "Рассинхрон" in out, out)
@@ -437,6 +460,7 @@ def test_publish_commits_bump_then_rolls_back_failed_tag() -> None:
     try:
         rc, _ = run_release(app, "-Prepare")
         assert rc == 0
+        rebuild_dist(app)
         rc, out = run_release(app)
         check("gh-shim оборвал публикацию", rc == 1 and "gh release create" in out, out)
         check("оповещение не отправлялось", "blocked: api" not in out and "Витрина оповещена" not in out, out)
@@ -467,6 +491,7 @@ def test_publish_pushes_branch_and_tag_to_remote() -> None:
     try:
         rc, out = run_release(app, "-Prepare")
         check("подготовка прошла", rc == 0, out)
+        rebuild_dist(app)
         rc, out = run_release(app)
         check("публикация прошла", rc == 0, out)
         check("релиз опубликован", "[OK] Релиз" in out, out)
@@ -496,6 +521,7 @@ def test_publish_survives_failed_store_notification() -> None:
     try:
         rc, out = run_release(app, "-Prepare")
         assert rc == 0, out
+        rebuild_dist(app)
         rc, out = run_release(app)
         check("публикация прошла при сбое оповещения", rc == 0, out)
         check("релиз опубликован", "[OK] Релиз" in out, out)
@@ -537,6 +563,7 @@ def test_publish_notes_from_changelog_section() -> None:
     try:
         rc, out = run_release(app, "-Prepare")
         check("подготовка прошла (саммари есть)", rc == 0, out)
+        rebuild_dist(app)
         rc, out = run_release(app)
         check("публикация прошла", rc == 0, out)
         check("скрипт сообщил заметки", "Notes:" in out, out)
@@ -554,6 +581,50 @@ def test_publish_notes_from_changelog_section() -> None:
         message = git(app, "cat-file", "-p", "v1.6.0").split("\n\n", 1)[1]
         check("тело тега = заметкам релиза",
               message.strip() == expected.strip(), f"тег={message!r}")
+    finally:
+        cleanup(app)
+
+
+def test_publish_refuses_stale_asset() -> None:
+    """Гейт чужой версии (шаг 2): в dist/ остался app-1.5.2.apk при выпуске 1.6.0.
+
+    Без пересборки публикация MUST отказать до push ветки и тега, перечислив
+    виновный файл и указав пересобрать либо убрать в dist/archive.
+    """
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
+    try:
+        rc, _ = run_release(app, "-Prepare")
+        assert rc == 0
+        rc, out = run_release(app)
+        check("чужой ассет -> отказ", rc == 1 and "другой версии" in out, out)
+        check("чужой ассет: файл перечислен", "app-1.5.2.apk" in out, out)
+        check("чужой ассет: указано куда деть", "dist/archive" in out, out)
+        check("чужой ассет: тег не создан", git(app, "tag", "--list") == "")
+        check("чужой ассет: бамп не закоммичен",
+              git(app, "log", "-1", "--pretty=%s") == "init")
+    finally:
+        cleanup(app)
+
+
+def test_publish_allows_asset_without_version() -> None:
+    """Ассет без версии в имени (FogMap-release-latest.apk) гейт пропускает.
+
+    dist/ пересоздан без версий в именах — публикация проходит мимо шага 2
+    и падает позже на gh-shim (релиза нет, это фикстура отката).
+    """
+    app = make_fixture(with_summary("### Добавлено\n- Экспорт\n"))
+    try:
+        rc, _ = run_release(app, "-Prepare")
+        assert rc == 0
+        dist = app / "dist"
+        for stale in dist.glob("*.apk"):
+            stale.unlink()
+        (dist / "app-release-latest.apk").write_bytes(b"apk")
+        rc, out = run_release(app)
+        check("ассет без версии: гейт пройден",
+              "другой версии" not in out, out)
+        check("ассет без версии: дошли до gh",
+              "gh release create" in out, out)
     finally:
         cleanup(app)
 
@@ -577,6 +648,8 @@ def main() -> int:
     test_publish_refuses_without_prepare()
     test_publish_refuses_dirty_files()
     test_publish_refuses_version_desync()
+    test_publish_refuses_stale_asset()
+    test_publish_allows_asset_without_version()
     test_publish_notes_from_changelog_section()
     test_publish_commits_bump_then_rolls_back_failed_tag()
     test_publish_pushes_branch_and_tag_to_remote()
