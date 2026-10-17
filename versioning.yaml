@@ -73,10 +73,11 @@ projects:
     changelog: CHANGELOG.md
     release: false
 
+  # GitHub Releases не производятся — релиз = git-тег vX.Y.Z, заметки из changelog.
   benchmark:
     repo: dziominpavel/Benchmark
     path: ../Benchmark
-    track: static
+    track: release
     version_file: pyproject.toml
     changelog: CHANGELOG.md
     release: false
