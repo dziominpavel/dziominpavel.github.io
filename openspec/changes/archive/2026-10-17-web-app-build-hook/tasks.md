@@ -15,7 +15,7 @@
 
 - [x] 3.1 `registry.yaml`: у записи `benchmark` — `build: python tools/export_web.py`; описание карточки уточнить (полный слепок консоли, только просмотр). Проверка: тест `load_web_registry` видит поле; локальная сборка `python generate.py --out _site` публикует `/apps/benchmark/` из результата команды.
 - [x] 3.2 `.github/workflows/build.yml`: `pip install pyyaml flask` с комментарием (Flask нужен команде Benchmark). Проверка: после пуша CI-сборка витрины зелёная, страница обновилась (наблюдение).
-- [ ] 3.3 Приёмка и снос рукописной папки: после успешной публикации удалить `web/` в `C:\projects\Benchmark` (index.html, app.js, style.css, index.json) и обновить упоминания в его docs; повторная сборка витрины проходит без `web/`. Проверка: `/apps/benchmark/` отдаёт слепок, сборка витрины не падает.
+- [x] 3.3 Приёмка и снос рукописной папки: после успешной публикации удалить `web/` в `C:\projects\Benchmark` (index.html, app.js, style.css, index.json) и обновить упоминания в его docs; повторная сборка витрины проходит без `web/`. Проверка: `/apps/benchmark/` отдаёт слепок, сборка витрины не падает.
 
 ## 4. Документация и changelog
 
@@ -25,7 +25,7 @@
 ## 5. Интеграционная проверка
 
 - [x] 5.1 Локальные прогоны: `python tests/test_generate.py` и `python tests/validate_site.py _site` на свежей сборке — зелёные; `python generate.py --out _site` с реальным реестром собирает и instagram-tracker, и benchmark. Проверка: коды возврата 0.
-- [ ] 5.2 Приёмка на Pages: `/apps/benchmark/` — все разделы, фильтры, очередь, плашка и возврат в каталог; карточка на главной с актуальной датой; instagram-tracker не изменился; пуш в `tools/**` Benchmark запускает пересборку (наблюдение). Проверка: чеклист пройден.
+- [x] 5.2 Приёмка на Pages: `/apps/benchmark/` — все разделы, фильтры, очередь, плашка и возврат в каталог; карточка на главной с актуальной датой; instagram-tracker не изменился; пуш в `tools/**` Benchmark запускает пересборку (наблюдение). Проверка: чеклист пройден.
 
 ## Workflow follow-up
 
