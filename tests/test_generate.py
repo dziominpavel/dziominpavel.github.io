@@ -372,6 +372,248 @@ def test_web_publish_broken_source():
     print("ok: битый web-источник -> skip + warning, без исключений")
 
 
+def _fake_build_clone(marker: str = "СБОРКА", *, extra: dict | None = None):
+    """Фейковый клон build-источника: builder.py + управляющие файлы.
+
+    builder.py читает marker.txt, кладёт index.html в каталог --out и
+    реагирует на файлы-переключатели: fail.txt — код 2 с хвостом вывода,
+    sleep.txt — долгий сон (для таймаута), noindex.txt — без index.html,
+    icon.txt — дописать icon.svg.
+    """
+    builder = (
+        "import os, sys\n"
+        "marker = open('marker.txt', encoding='utf-8').read()\n"
+        "out = sys.argv[sys.argv.index('--out') + 1]\n"
+        "os.makedirs(out, exist_ok=True)\n"
+        "if os.path.exists('fail.txt'):\n"
+        "    sys.stderr.write('boom: сборка сломалась\\n')\n"
+        "    sys.exit(2)\n"
+        "if os.path.exists('sleep.txt'):\n"
+        "    import time\n"
+        "    time.sleep(30)\n"
+        "    sys.exit(0)\n"
+        "if os.path.exists('noindex.txt'):\n"
+        "    open(os.path.join(out, 'other.txt'), 'w', encoding='utf-8')"
+        ".write(marker)\n"
+        "else:\n"
+        "    open(os.path.join(out, 'index.html'), 'w', encoding='utf-8')"
+        ".write(marker)\n"
+        "if os.path.exists('icon.txt'):\n"
+        "    open(os.path.join(out, 'icon.svg'), 'w', encoding='utf-8')"
+        ".write('<svg></svg>')\n"
+    )
+
+    def clone(repo: str, dest: str, token=None) -> bool:
+        os.makedirs(dest, exist_ok=True)
+        with open(os.path.join(dest, "builder.py"), "w", encoding="utf-8") as fh:
+            fh.write(builder)
+        with open(os.path.join(dest, "marker.txt"), "w", encoding="utf-8") as fh:
+            fh.write(marker)
+        for rel, content in (extra or {}).items():
+            path = os.path.join(dest, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        return True
+
+    return clone
+
+
+def test_web_build_field_parsing():
+    """web-app-build-hook 1.1: build — непустая строка, иначе WARN + None."""
+    with tempfile.TemporaryDirectory() as tmp:
+        reg_path = os.path.join(tmp, "registry.yaml")
+        with open(reg_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "web:\n"
+                "  ok-build:\n"
+                "    repo: demo/Ok\n"
+                "    title: Ок\n"
+                "    description: Со сборкой.\n"
+                "    build: python tools/export_web.py\n"
+                "  empty-build:\n"
+                "    repo: demo/Empty\n"
+                "    title: Пусто\n"
+                "    description: Пустая строка.\n"
+                '    build: ""\n'
+                "  num-build:\n"
+                "    repo: demo/Num\n"
+                "    title: Число\n"
+                "    description: Не строка.\n"
+                "    build: 123\n"
+                "  no-build:\n"
+                "    repo: demo/None\n"
+                "    title: Нет\n"
+                "    description: Без поля.\n"
+            )
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            entries = load_web_registry(reg_path)
+        by_slug = {e["slug"]: e for e in entries}
+        assert by_slug["ok-build"]["build"] == "python tools/export_web.py"
+        assert by_slug["empty-build"]["build"] is None
+        assert by_slug["num-build"]["build"] is None
+        assert by_slug["no-build"]["build"] is None
+        assert err.getvalue().count("поле build") == 2, err.getvalue()
+    print("ok: поле build — непустая строка проходит, пустая/не-строка -> WARN + None")
+
+
+def test_web_build_command_success():
+    """web-app-build-hook 1.2/1.3/2.1: статика из --out, приоритет над web/."""
+    import generate as gen
+    orig = (gen.clone_project, gen.head_commit_date,
+            gen.fetch_web_commit_date, gen.fetch_path_commit_date)
+    cmd = f"{sys.executable.replace(os.sep, '/')} builder.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        entry = {"slug": "built", "repo": "demo/Built", "title": "Сборка",
+                 "description": "Собранная статика.", "data": "data/index.json",
+                 "build": cmd}
+        gen.clone_project = _fake_build_clone(
+            "СБОРКА",
+            extra={"web/index.html": "СТАРОЕ",
+                   "icon.txt": "",
+                   "data/index.json": json.dumps({"updated": "2026-10-03T00:00:00Z"})})
+        gen.fetch_path_commit_date = (
+            lambda repo, path, token=None: "2026-10-03T00:00:00Z")
+        fetch_web_calls: list[str] = []
+        gen.fetch_web_commit_date = (
+            lambda repo, token=None: fetch_web_calls.append(repo) or None)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                cards = collect_web_projects([entry], workdir=work)
+        finally:
+            (gen.clone_project, gen.head_commit_date,
+             gen.fetch_web_commit_date, gen.fetch_path_commit_date) = orig
+        assert "WARN" not in err.getvalue(), err.getvalue()
+        assert len(cards) == 1, cards
+        card = cards[0]
+        assert card["date"] == "2026-10-03T00:00:00Z"  # updated из data
+        assert card["icon"] == "icon.svg"  # иконка найдена в каталоге вывода
+        assert card["data_file"] == "data/index.json"
+        assert fetch_web_calls == []  # коммит-дата web/ не запрашивается
+
+        # рендер: публикуется результат сборки, а не папка web/ источника
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            urls = render_site([], cards, out)
+        finally:
+            os.chdir(cwd)
+        with open(os.path.join(out, "apps", "built", "index.html"),
+                  encoding="utf-8") as fh:
+            assert fh.read() == "СБОРКА"
+        assert os.path.isfile(os.path.join(out, "apps", "built", "index.json"))
+        assert f"{SITE_URL}/apps/built/" in urls, urls
+        with open(os.path.join(out, "sitemap.xml"), encoding="utf-8") as fh:
+            assert f"<loc>{SITE_URL}/apps/built/</loc>" in fh.read()
+    print("ok: build — статика из каталога вывода, приоритет над web/, данные рядом")
+
+
+def test_web_build_date_and_icon_without_data():
+    """web-app-build-hook 1.3: без data: дата — HEAD клона; без иконки — заглушка."""
+    import generate as gen
+    orig = (gen.clone_project, gen.head_commit_date, gen.fetch_web_commit_date)
+    cmd = f"{sys.executable.replace(os.sep, '/')} builder.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        entry = {"slug": "plain", "repo": "demo/Plain", "title": "Простая",
+                 "description": "Без данных.", "build": cmd}
+        gen.clone_project = _fake_build_clone("СТАТИКА")
+        gen.head_commit_date = lambda project_dir: "2026-10-02T08:00:00Z"
+        fetch_web_calls: list[str] = []
+        gen.fetch_web_commit_date = (
+            lambda repo, token=None: fetch_web_calls.append(repo) or None)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                cards = collect_web_projects([entry], workdir=work)
+        finally:
+            gen.clone_project, gen.head_commit_date, gen.fetch_web_commit_date = orig
+        assert "WARN" not in err.getvalue(), err.getvalue()
+        assert cards[0]["date"] == "2026-10-02T08:00:00Z"  # HEAD клона, не сборки
+        assert cards[0]["icon"] is None
+        assert fetch_web_calls == []
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site([], cards, out)
+        finally:
+            os.chdir(cwd)
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        assert '<span class="letter letter-64"' in home  # заглушка без иконки
+        assert "Обновлено 02.10.2026" in home
+    print("ok: build без data: — дата HEAD клона, плейсхолдер без иконки сохранён")
+
+
+def test_web_build_failures():
+    """web-app-build-hook 1.2: сбой, пустой результат, таймаут -> WARN + skip."""
+    import generate as gen
+    orig = gen.clone_project
+    cmd = f"{sys.executable.replace(os.sep, '/')} builder.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        entry = {"slug": "ghost-build", "repo": "demo/Ghost", "title": "Призрак",
+                 "description": "Ломается.", "build": cmd}
+
+        def fresh_work(name: str) -> str:
+            # Свой рабочий каталог на сценарий: переключатели клона не текут
+            # из части в часть.
+            path = os.path.join(tmp, f"work-{name}")
+            os.makedirs(path)
+            return path
+
+        # а) ненулевой код -> WARN с хвостом вывода + пропуск
+        gen.clone_project = _fake_build_clone("X", extra={"fail.txt": ""})
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                assert collect_web_projects([entry],
+                                            workdir=fresh_work("fail")) == []
+        finally:
+            gen.clone_project = orig
+        out = err.getvalue()
+        assert "WARN" in out and "ghost-build" in out and "кодом 2" in out, out
+        assert "boom" in out, out  # хвост вывода команды попал в WARN
+
+        # б) код 0, но нет index.html -> WARN + пропуск
+        gen.clone_project = _fake_build_clone("X", extra={"noindex.txt": ""})
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                assert collect_web_projects([entry],
+                                            workdir=fresh_work("noindex")) == []
+        finally:
+            gen.clone_project = orig
+        assert "index.html" in err.getvalue() and "ghost-build" in err.getvalue()
+
+        # в) таймаут -> WARN + пропуск (таймаут задаётся параметром для тестов)
+        gen.clone_project = _fake_build_clone("X", extra={"sleep.txt": ""})
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                assert collect_web_projects([entry],
+                                            workdir=fresh_work("timeout"),
+                                            build_timeout=1) == []
+        finally:
+            gen.clone_project = orig
+        assert "таймаут" in err.getvalue() and "ghost-build" in err.getvalue()
+
+        # г) команда не разбирается (незакрытая кавычка) -> WARN + пропуск
+        gen.clone_project = _fake_build_clone("X")
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                broken = dict(entry, build='python "unclosed')
+                assert collect_web_projects([broken],
+                                            workdir=fresh_work("broken")) == []
+        finally:
+            gen.clone_project = orig
+        assert "не разобрана" in err.getvalue()
+    print("ok: провал сборки, пустой вывод и таймаут -> WARN + skip без падения")
+
+
 def test_sort_by_date_desc():
     """Порядок витрины: от свежей даты к старой, без даты — в конец."""
     cards = [
@@ -857,6 +1099,10 @@ if __name__ == "__main__":
     test_release_card_json()
     test_web_registry_and_publish_success()
     test_web_publish_broken_source()
+    test_web_build_field_parsing()
+    test_web_build_command_success()
+    test_web_build_date_and_icon_without_data()
+    test_web_build_failures()
     test_sort_by_date_desc()
     test_fetch_web_commit_date()
     test_collect_web_date_from_commit()

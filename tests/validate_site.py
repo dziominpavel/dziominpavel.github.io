@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Проверка собранной витрины в _site/: HTML-разметка, sitemap, favicon, meta.
 
+Store-страницы проверяются полным chrome-набором; страницы приложений
+(_site/apps/**) — общими проверками: баланс тегов, lang=ru, отсутствие
+шаблонных остатков. Sitemap покрывает store-страницы и landing-страницы
+приложений; глубокие подстраницы слепков не требуются (web-app-build-hook, D6).
+
 Запуск: python tests/validate_site.py [каталог]
 Код возврата: 0 — всё ок, 1 — есть проблемы.
 """
@@ -44,38 +49,53 @@ def main(root: str = "_site") -> int:
 
     for page in sorted(base.rglob("*.html")):
         text = page.read_text(encoding="utf-8")
+        rel = page.relative_to(base)
+        # Страницы приложений (_site/apps/**) — чужой UI (слепок консоли и
+        # т.п.): им положены общие проверки; полный store-chrome — витрине (D6).
+        app_page = rel.parts[0] == "apps"
         leftovers = re.findall(r"\{[a-z_]+\}", text)
         checker = Checker()
         checker.feed(text)
         checker.close()
         problems = leftovers + checker.errors + checker.stack
-        rel = page.relative_to(base)
         print(f"{rel}: {'OK' if not problems else f'ПРОБЛЕМЫ: {problems}'}")
         ok = ok and not problems
 
-        required = {
-            "meta charset": 'charset="utf-8"' in text,
-            "meta description": 'name="description"' in text,
-            "og:title": "og:title" in text,
-            "viewport": 'name="viewport"' in text,
-            "favicon": 'rel="icon"' in text,
-            "nav: О проекте": "О проекте" in text,
-            "nav: Главная": "Главная" in text,
-            "theme.js": "static/js/theme.js" in text,
-            "lang=ru": 'lang="ru"' in text,
-            "data-theme=dark": 'data-theme="dark"' in text,
-        }
+        required = {"lang=ru": 'lang="ru"' in text}
+        if not app_page:
+            required = {
+                "meta charset": 'charset="utf-8"' in text,
+                "meta description": 'name="description"' in text,
+                "og:title": "og:title" in text,
+                "viewport": 'name="viewport"' in text,
+                "favicon": 'rel="icon"' in text,
+                "nav: О проекте": "О проекте" in text,
+                "nav: Главная": "Главная" in text,
+                "theme.js": "static/js/theme.js" in text,
+                "lang=ru": 'lang="ru"' in text,
+                "data-theme=dark": 'data-theme="dark"' in text,
+            }
         for name, good in required.items():
             if not good:
                 print(f"   !! нет обязательного блока: {name}")
                 ok = False
 
-    # sitemap покрывает все страницы
+    # Sitemap покрывает страницы витрины и landing-страницы приложений;
+    # глубокие подстраницы слепков не требуются (D6).
     sitemap = (base / "sitemap.xml").read_text(encoding="utf-8")
     xml.dom.minidom.parseString(sitemap)  # валидный XML или исключение
     locs = set(re.findall(r"<loc>(.*?)</loc>", sitemap))
-    html_pages = {f"{SITE}/{p.relative_to(base).parent.as_posix()}/" if p.parent != base else f"{SITE}/"
-                  for p in base.rglob("index.html")}
+    html_pages = set()
+    for p in base.rglob("index.html"):
+        rel = p.relative_to(base)
+        if rel.parts[0] == "apps":
+            if len(rel.parts) == 3:  # только landing: apps/<slug>/index.html
+                html_pages.add(f"{SITE}/apps/{rel.parts[1]}/")
+            continue
+        if p.parent == base:
+            html_pages.add(f"{SITE}/")
+        else:
+            html_pages.add(f"{SITE}/{rel.parent.as_posix()}/")
     if locs != html_pages:
         print(f"sitemap FAIL: {sorted(locs)} != {sorted(html_pages)}")
         ok = False

@@ -43,10 +43,14 @@ jobs:
           python-version: "3.12"
 
       - name: Зависимости
-        run: pip install pyyaml
+        # flask — команде сборки Benchmark (build: python tools/export_web.py, D7).
+        run: pip install pyyaml flask
 
       - name: Юнит-тесты генератора
         run: python tests/test_generate.py
+
+      - name: Тесты валидатора витрины
+        run: python tests/test_validate_site.py
 
       - name: Юнит-тесты release-скрипта
         run: python tests/test_release_phases.py

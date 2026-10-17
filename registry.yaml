@@ -17,13 +17,16 @@ projects:
   wishlot:
     repo: dziominpavel/Wishlot
 
-# Веб-приложения: статика из папки web/ репозитория-источника публикуется
-# на /apps/<slug>/. Без release/version/скриншотов — только repo/title/description.
+# Веб-приложения: статика публикуется на /apps/<slug>/ — из папки web/
+# репозитория-источника или из результата команды сборки `build` (каталог
+# вывода передаётся ей аргументом --out). Без release/version/скриншотов —
+# только repo/title/description (+ опционально data и build).
 web:
   benchmark:
     repo: dziominpavel/Benchmark
     title: Benchmark
-    description: "ELO-рейтинг языковых моделей под мои задачи: качество определяется на примере приложения VoiceMind (задача T-001 — поиск багов). Таблица лидеров, динамика рейтингов и лента прогонов — в браузере."
+    description: "ELO-рейтинг языковых моделей под мои задачи: качество определяется на примере приложения VoiceMind (задача T-001 — поиск багов). Полный слепок консоли — рейтинг, история, аналитика, настройки — в браузере, только просмотр."
+    build: python tools/export_web.py  # полный read-only слепок консоли (change static-mirror-export)
     data: data/index.json  # копируется рядом со страницей; дата карточки — из updated
   instagram-tracker:
     repo: dziominpavel/InstagramTracker

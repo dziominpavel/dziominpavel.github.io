@@ -21,7 +21,8 @@ GitHub Releases и держит в корне файлы контракта (`st
      (`app-released`) — сборка идёт без ожидания расписания;
   2. **пуш web-статики** — workflow самого репозитория-источника
      (`notify-store.yml`) шлёт `repository_dispatch` (`web-updated`) при пуше,
-     тронувшем `web/**` (для источника с файлом данных — и `data/**`);
+     тронувшем статику, её источник (сборку) или файл данных — у Benchmark
+     это `web/**`, `tools/**`, `data/**`;
   3. **cron-подстраховка** — `*/30` и `17,47 * * * *`: подхватывает сбой
      оповещения и всё, что не попало в события.
 
@@ -49,19 +50,30 @@ python generate.py
 
 ## Как подключить web-источник
 
+Запись `web:` описывает источник статики: папка `web/` репозитория или
+команда сборки `build` (приоритет у команды; папка `web/` тогда не нужна).
+Команда исполняется в корне свежего клона, получает каталог вывода
+аргументом `--out <каталог>`, должна завершиться кодом 0 и оставить
+`index.html`. Провал сборки — предупреждение в логе и пропуск записи,
+витрина собирается дальше (как при недоступном источнике).
+
 Чтобы витрина обновлялась сразу после пуша статики web-приложения:
 
-1. Добавить запись веб-источника в `registry.yaml` этого репозитория.
+1. Добавить запись веб-источника в `registry.yaml` этого репозитория
+   (для командной сборки — поле `build`, например у Benchmark:
+   `build: python tools/export_web.py`).
 2. Создать в репозитории-источнике `.github/workflows/notify-store.yml` —
-   эталоны: `dziominpavel/Benchmark` (`paths: [web/**, data/**]`) и
+   эталоны: `dziominpavel/Benchmark` (`paths: [web/**, tools/**, data/**]`) и
    `dziominpavel/InstagramTracker` (`paths: [web/**]`). Workflow шлёт
    `POST /repos/dziominpavel/dziominpavel.github.io/dispatches`
-   с `event_type=web-updated` на пуше, тронувшем статику.
+   с `event_type=web-updated` на пуше, тронувшем статику, её источник
+   или файл данных.
 3. Завести classic PAT со scope `repo` и сохранить его в секрет репозитория-источника
    под именем `STORE_DISPATCH_TOKEN` (`gh secret set STORE_DISPATCH_TOKEN --repo <owner>/<repo>`).
    Встроенного `GITHUB_TOKEN` недостаточно: он не даёт доступа к чужому репозиторию.
    Без секрета (или при ошибке отправки) workflow пишет предупреждение и выходит
    с кодом 0 — пуш не блокируется, витрина подхватит изменения по расписанию.
 4. Проверить: `gh secret list --repo <owner>/<repo>` показывает
-   `STORE_DISPATCH_TOKEN`, а после пуша в `web/**` в `gh run list` появляется
-   запуск `notify-store`, за ним — запуск витрины с `event=repository_dispatch`.
+   `STORE_DISPATCH_TOKEN`, а после пуша в статику (или её источник) в
+   `gh run list` появляется запуск `notify-store`, за ним — запуск витрины
+   с `event=repository_dispatch`.

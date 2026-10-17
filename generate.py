@@ -6,7 +6,8 @@
 - GitHub API      — releases/latest: версия, размер, дата, ссылки;
                     releases (все опубликованные): download_count за всё
                     приложение (токен: переменная GITHUB_TOKEN);
-- git clone (deep=1) — store.yaml, иконка, screenshots/ каждого проекта.
+- git clone (deep=1) — store.yaml, иконка, screenshots/ каждого проекта;
+- команда сборки web-записи (build) — производная статика в каталог вывода.
 
 Инварианты (capabilities store-data-contract / store-catalog):
 - битый проект (нет полей, битый YAML) -> skip + warning, сборка НЕ падает;
@@ -22,6 +23,7 @@ import html
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -46,6 +48,8 @@ GITHUB_API = "https://api.github.com"
 # ходим по /repos/{repo}/releases страницами, обрезая очень большие репозитории.
 RELEASES_PER_PAGE = 100
 MAX_RELEASE_PAGES = 10
+# Таймаут команды сборки статики web-записи (build), секунды — как у clone_project.
+BUILD_TIMEOUT = 300
 
 # Авто-детект платформ по маскам ассетов (D5): поле platforms не используется.
 PLATFORM_MASKS = (
@@ -84,7 +88,9 @@ def load_registry(path: str = REGISTRY_PATH) -> list[dict]:
 def load_web_registry(path: str = REGISTRY_PATH) -> list[dict]:
     """Читает секцию `web:` (D3/D6): slug [a-z0-9-], repo, title, description.
 
-    Записи без GitHub Release и скриншотов; битые ключи/поля -> skip + warning.
+    Опциональные поля: `data` (файл данных рядом со страницей) и `build`
+    (команда сборки статики, web-app-build-hook). Битые ключи/поля ->
+    skip/warning.
     """
     with open(path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
@@ -123,9 +129,18 @@ def load_web_registry(path: str = REGISTRY_PATH) -> list[dict]:
             print(f"[WARN] registry[web:{slug}]: поле data {data_file!r} — "
                   f"игнорируется (ожидается относительный путь)", file=sys.stderr)
             data_file = None
+        # Опциональная команда сборки статики (web-app-build-hook, D1/D2):
+        # непустая строка; для записи с build папка web/ не требуется.
+        build = record.get("build")
+        if build is not None and (not isinstance(build, str) or not build.strip()):
+            print(f"[WARN] registry[web:{slug}]: поле build {build!r} — "
+                  f"игнорируется (ожидается непустая строка)", file=sys.stderr)
+            build = None
+        if isinstance(build, str):
+            build = build.strip()
         entries.append({"slug": slug, "repo": repo,
                         "title": title.strip(), "description": description.strip(),
-                        "data": data_file})
+                        "data": data_file, "build": build})
     return entries
 
 
@@ -426,12 +441,59 @@ def head_commit_date(project_dir: str) -> str | None:
     return out.stdout.strip() or None
 
 
-def collect_web_projects(entries: list[dict], token: str | None = None,
-                         workdir: str | None = None) -> list[dict]:
-    """Собирает web-записи (D1/D6): клон источника + контракт папки web/.
+def run_build_command(slug: str, command: str, project_dir: str, out_dir: str,
+                      timeout: int = BUILD_TIMEOUT) -> bool:
+    """Исполняет команду сборки статики записи web: (D2/D3).
 
-    Успехом считается только наличие web/index.html — из него потом растут
-    страница, карточка на главной и URL в sitemap (skip + warning при неудаче).
+    cwd — корень клона, каталог вывода передаётся аргументом --out.
+    Успех — код 0 и index.html в каталоге вывода. Любой провал печатает
+    предупреждение со слагом (для ненулевого кода — с хвостом вывода)
+    и возвращает False: запись пропускается, сборка витрины не падает.
+    """
+    try:
+        args = shlex.split(command)
+    except ValueError as exc:
+        print(f"[WARN] {slug}: команда сборки {command!r} не разобрана "
+              f"({exc}) — запись пропущена", file=sys.stderr)
+        return False
+    if not args:
+        print(f"[WARN] {slug}: команда сборки пуста — запись пропущена",
+              file=sys.stderr)
+        return False
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            args + ["--out", out_dir], cwd=project_dir,
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        detail = (f"таймаут {timeout} с"
+                  if isinstance(exc, subprocess.TimeoutExpired) else exc)
+        print(f"[WARN] {slug}: сборка {command!r} не завершилась ({detail}) — "
+              f"запись пропущена", file=sys.stderr)
+        return False
+    if proc.returncode != 0:
+        tail = "\n".join(((proc.stdout or "") + (proc.stderr or "")).splitlines()[-20:])
+        print(f"[WARN] {slug}: сборка {command!r} завершилась с кодом "
+              f"{proc.returncode} — запись пропущена"
+              + (f"\n{tail}" if tail else ""), file=sys.stderr)
+        return False
+    if not os.path.isfile(os.path.join(out_dir, "index.html")):
+        print(f"[WARN] {slug}: сборка {command!r} не оставила index.html "
+              f"в каталоге вывода — запись пропущена", file=sys.stderr)
+        return False
+    return True
+
+
+def collect_web_projects(entries: list[dict], token: str | None = None,
+                         workdir: str | None = None,
+                         build_timeout: int = BUILD_TIMEOUT) -> list[dict]:
+    """Собирает web-записи (D1/D6): клон источника + контракт статики.
+
+    Источник статики — папка web/ либо результат команды сборки `build`
+    (приоритет у build, D2). Успехом считается наличие index.html в выбранном
+    источнике — из него потом растут страница, карточка на главной и URL
+    в sitemap (skip + warning при неудаче).
     """
     collected: list[dict] = []
     tmp_root = workdir or tempfile.mkdtemp(prefix="web-build-")
@@ -442,14 +504,24 @@ def collect_web_projects(entries: list[dict], token: str | None = None,
         project_dir = os.path.join(tmp_root, f"web-{slug}")
         if not clone_project(entry["repo"], project_dir, token):
             continue
-        web_dir = os.path.join(project_dir, "web")
-        if not os.path.isfile(os.path.join(web_dir, "index.html")):
-            print(f"[WARN] {entry['repo']}: в web/ нет index.html — "
-                  f"веб-приложение {slug!r} пропущено", file=sys.stderr)
-            continue
+        build = entry.get("build")
+        if build:
+            # Каталог вывода — временный, вне клона (D2): команда пишет статику
+            # туда, дальше он публикуется вместо папки web/.
+            web_dir = os.path.join(tmp_root, f"web-{slug}-out")
+            if not run_build_command(slug, build, project_dir, web_dir,
+                                     timeout=build_timeout):
+                continue
+        else:
+            web_dir = os.path.join(project_dir, "web")
+            if not os.path.isfile(os.path.join(web_dir, "index.html")):
+                print(f"[WARN] {entry['repo']}: в web/ нет index.html — "
+                      f"веб-приложение {slug!r} пропущено", file=sys.stderr)
+                continue
 
         # Дата обновления: updated из объявленного файла данных (Benchmark),
-        # иначе — дата последнего коммита папки web/ источника.
+        # иначе — дата последнего коммита папки web/ источника (для build —
+        # HEAD клона без запроса коммит-даты web/, D4).
         # Fallback: HEAD клона -> дата сборки + WARN. Дата сборки здесь —
         # последний шаг, а не значение по умолчанию.
         date: str | None = None
@@ -481,14 +553,22 @@ def collect_web_projects(entries: list[dict], token: str | None = None,
                 date = datetime.now(timezone.utc).date().isoformat()
         else:
             data_file = None
-            date = (fetch_web_commit_date(entry["repo"], token)
-                    or head_commit_date(project_dir))
+            # Для записи со сборкой коммит-дата web/ не запрашивается (папки
+            # может не быть): дата карточки — HEAD клона источника (D4).
+            if build:
+                date = head_commit_date(project_dir)
+                date_source = "дату HEAD клона"
+            else:
+                date = (fetch_web_commit_date(entry["repo"], token)
+                        or head_commit_date(project_dir))
+                date_source = "коммит-дату web/"
             if date is None:
-                print(f"[WARN] {slug}: коммит-дату web/ получить не удалось — "
+                print(f"[WARN] {slug}: {date_source} получить не удалось — "
                       f"дата берётся как дата сборки", file=sys.stderr)
                 date = datetime.now(timezone.utc).date().isoformat()
 
-        # Иконка карточки: web/icon.* (опционально; нет — буквенный плейсхолдер).
+        # Иконка карточки: icon.* в источнике статики — web/ или каталог
+        # вывода сборки (опционально; нет — буквенный плейсхолдер).
         icon = next((name for name in sorted(os.listdir(web_dir))
                      if name.startswith("icon.")
                      and name.lower().endswith((".png", ".svg", ".webp", ".jpg", ".jpeg"))),
@@ -505,7 +585,12 @@ def collect_web_projects(entries: list[dict], token: str | None = None,
             "project_dir": project_dir,
             "web_dir": web_dir,
         })
-        print(f"[INFO] web:{slug}: статика web/ готова к публикации", file=sys.stderr)
+        if build:
+            print(f"[INFO] web:{slug}: результат сборки готов к публикации",
+                  file=sys.stderr)
+        else:
+            print(f"[INFO] web:{slug}: статика web/ готова к публикации",
+                  file=sys.stderr)
     if workdir is None:
         shutil.rmtree(tmp_root, ignore_errors=True)
     return collected
