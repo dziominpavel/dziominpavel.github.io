@@ -818,7 +818,8 @@ p { margin: 0 0 var(--sp-3); }
 
 /* --- страница «О проекте» --------------------------------------------------- */
 
-.about-body { max-width: 68ch; }
+.about-body { max-width: 78ch; margin: 0 auto; }
+.about-body .lead { max-width: none; }
 
 /* блок «Обо мне»: круглое фото (как в мессенджерах) + текст рядом */
 .author {
@@ -878,6 +879,15 @@ p { margin: 0 0 var(--sp-3); }
 }
 
 .contacts svg { flex: none; color: var(--accent); }
+
+.contact-handle {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.about-cta { margin: var(--sp-6) 0 0; }
 
 /* узкий экран: логотип hero ужимается, чтобы заголовок не распирал строку */
 @media (max-width: 480px) {

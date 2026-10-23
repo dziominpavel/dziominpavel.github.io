@@ -1070,29 +1070,35 @@ APP_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / 
       </aside>
     </div>"""
 
-ABOUT_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / О проекте</nav>
-    <h1>О проекте</h1>
-    <p class="lead">«Мои приложения» — бесплатный каталог моих приложений: описания,
-    системные требования, скриншоты и кнопки скачивания.</p>
-    <h2>Обо мне</h2>
-    <div class="author">
-      <img class="author-avatar" src="{root}static/img/avatar.jpg"
-           alt="Фото автора проекта" width="128" height="128">
-      <div class="author-text">
-        <p>Разрабатываю приложения и превращаю личные задачи в готовые продукты.
-        Всё, что вы видите в каталоге, начиналось с собственной необходимости:
-        удобный инструмент рождался для себя, а потом становился приложением,
-        которым пользуются другие.</p>
-        <p>Все проекты открыты: исходный код, релизы и сборки доступны каждому.
-        Открыт к сотрудничеству: идеи, предложения и вопросы приветствуются.</p>
+ABOUT_TEMPLATE = """    <div class="about-body">
+      <nav class="crumbs"><a href="{root}">Главная</a> / О проекте</nav>
+      <h1>О проекте</h1>
+      <p class="lead">«Мои приложения» — каталог бесплатных приложений для Android,
+      Windows и веб. Он объединяет инструменты для практических задач: карты,
+      трекеры, аналитика. Сборки для Android и Windows доступны для скачивания,
+      веб-приложения открываются в браузере. Исходный код открыт.</p>
+      <h2>Об авторе</h2>
+      <div class="author">
+        <img class="author-avatar" src="{root}static/img/avatar.jpg"
+             alt="Фото автора" width="128" height="128">
+        <div class="author-text">
+          <p>Я разрабатываю приложения для решения личных задач. Каждый проект
+          начинается с практической необходимости: инструмент создаётся для собственного
+          использования, а затем публикуется для пользователей. Исходный код, релизы
+          и сборки открыты — их можно проверить, собрать самостоятельно или предложить
+          улучшения.</p>
+          <p>Сотрудничество приветствуется: предложения, вопросы и сообщения об ошибках
+          принимаются в Telegram, Instagram и LinkedIn.</p>
+        </div>
       </div>
-    </div>
-    <h2>Связаться</h2>
-    <ul class="contacts">
-      <li><a href="https://t.me/Dziomin" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg><span>Telegram</span></a></li>
-      <li><a href="https://www.instagram.com/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg><span>Instagram</span></a></li>
-      <li><a href="https://www.linkedin.com/in/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg><span>LinkedIn</span></a></li>
-    </ul>"""
+      <h2>Связаться</h2>
+      <ul class="contacts">
+        <li><a href="https://t.me/Dziomin" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg><span>Telegram <span class="contact-handle">@Dziomin</span></span></a></li>
+        <li><a href="https://www.instagram.com/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg><span>Instagram <span class="contact-handle">@dziominpavel</span></span></a></li>
+        <li><a href="https://www.linkedin.com/in/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg><span>LinkedIn <span class="contact-handle">dziominpavel</span></span></a></li>
+      </ul>
+      <p class="about-cta"><a class="btn btn-primary" href="{root}">Смотреть приложения</a></p>
+    </div>"""
 
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#2563eb"/>
@@ -1235,8 +1241,9 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
     # --- «О проекте» --------------------------------------------------------
     write_page(os.path.join(out_dir, "about", "index.html"),
                render_page(title="О проекте — Мои приложения",
-                           description="О витрине «Мои приложения»: автор каталога, "
-                                       "открытые проекты и контакты для связи.",
+                           description="О каталоге «Мои приложения»: бесплатные "
+                                       "приложения для Android, Windows и веба, "
+                                       "принципы разработки и контакты автора.",
                            canonical=f"{SITE_URL}/about/", content=ABOUT_TEMPLATE.format(root="../"),
                            root="../"))
     pages.append("about")
