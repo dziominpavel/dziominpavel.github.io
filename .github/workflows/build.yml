@@ -43,8 +43,9 @@ jobs:
           python-version: "3.12"
 
       - name: Зависимости
-        # flask — команде сборки Benchmark (build: python tools/export_web.py, D7).
-        run: pip install pyyaml flask
+        # flask — команде сборки Benchmark (build: python tools/export_web.py, D7);
+        # pillow — производные WebP для скриншотов и иконок.
+        run: pip install pyyaml flask pillow
 
       - name: Юнит-тесты генератора
         run: python tests/test_generate.py

@@ -32,7 +32,11 @@ GitHub Releases и держит в корне файлы контракта (`st
 
 ## Локальное превью
 
+Нужны Python 3.12+ и зависимости: PyYAML, Pillow (производные WebP для
+скриншотов и иконок) и Flask (сборка web-источников с командой `build`).
+
 ```bash
+pip install pyyaml pillow flask
 python generate.py
 ```
 

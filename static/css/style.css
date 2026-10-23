@@ -770,6 +770,7 @@ p { margin: 0 0 var(--sp-3); }
 .shot img {
   display: block;
   width: 100%;
+  height: auto;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   transition: border-color var(--dur-fast) var(--ease),

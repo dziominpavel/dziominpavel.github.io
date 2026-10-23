@@ -15,6 +15,8 @@ import sys
 import tempfile
 import urllib.error
 
+from PIL import Image
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from generate import (  # noqa: E402
@@ -38,6 +40,16 @@ from generate import (  # noqa: E402
 )
 
 
+def make_image(path: str, size: tuple[int, int] = (108, 240)) -> None:
+    """Валидный PNG для фикстур: пайплайн производных читает его через Pillow."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    image = Image.new("RGB", size, (40, 80, 120))
+    try:
+        image.save(path, "PNG")
+    finally:
+        image.close()
+
+
 def make_project(root: str, *, name="FogMap", description="Трекер", icon="assets/icon.png",
                  screenshots=3, extra_fields=None, create_icon=True) -> str:
     """Создаёт валидный (или подающийся на дефекты) проект в песочнице."""
@@ -45,13 +57,11 @@ def make_project(root: str, *, name="FogMap", description="Трекер", icon="
     os.makedirs(proj, exist_ok=True)
     os.makedirs(os.path.join(proj, "assets"), exist_ok=True)
     if create_icon:
-        with open(os.path.join(proj, icon), "wb") as fh:
-            fh.write(b"\x89PNG fake")
+        make_image(os.path.join(proj, icon), (512, 512))
     shots_dir = os.path.join(proj, "screenshots")
     os.makedirs(shots_dir, exist_ok=True)
     for i in range(screenshots):
-        with open(os.path.join(shots_dir, f"shot{i + 1}.png"), "wb") as fh:
-            fh.write(b"\x89PNG fake")
+        make_image(os.path.join(shots_dir, f"shot{i + 1}.png"))
     fields = {"name": name, "description": description, "icon": icon,
               "requirements": "Android 8+"}
     if extra_fields:
@@ -115,7 +125,7 @@ def test_validate_broken_no_crash():
             os.makedirs(proj)
             os.makedirs(os.path.join(proj, "screenshots"))
             for i in range(3):
-                open(os.path.join(proj, "screenshots", f"s{i}.png"), "wb").close()
+                make_image(os.path.join(proj, "screenshots", f"s{i}.png"))
             with open(os.path.join(proj, "store.yaml"), "w", encoding="utf-8") as fh:
                 fh.write("name: X\ndescription: Y\n")
             store, problems = validate_project(proj, "noicon")
@@ -645,6 +655,129 @@ def _fake_release_card(slug: str, date, project_dir: str, notes: str = "") -> di
     }
 
 
+def test_image_derivatives_render():
+    """2.1/2.4 + 3.1/3.2: производные до рендера, в _site только WebP, srcset."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        proj = make_project(tmp, screenshots=1)
+        make_image(os.path.join(proj, "screenshots", "shot1.png"), (1080, 2400))
+        card = _fake_release_card("fogmap", "2026-05-01T10:00:00Z", proj)
+        card["store"]["icon"] = "assets/icon.png"
+        card["icon_missing"] = False
+        card["screenshots"] = ["shot1.png"]
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site([card], [], out)
+        finally:
+            os.chdir(cwd)
+
+        slug_dir = os.path.join(out, "fogmap")
+        shots_dir = os.path.join(slug_dir, "screenshots")
+        assert sorted(os.listdir(shots_dir)) == [
+            "shot-01-1080.webp", "shot-01-540.webp"], os.listdir(shots_dir)
+        for name, size in (("icon-96.webp", (96, 96)),
+                           ("icon-192.webp", (192, 192)),
+                           ("screenshots/shot-01-540.webp", (540, 1200)),
+                           ("screenshots/shot-01-1080.webp", (1080, 2400))):
+            with Image.open(os.path.join(slug_dir, name)) as image:
+                assert image.format == "WEBP", (name, image.format)
+                assert image.size == size, (name, image.size)
+        # исходники в _site не копируются
+        assert not os.path.exists(os.path.join(slug_dir, "icon.png"))
+        assert not os.path.exists(os.path.join(shots_dir, "shot1.png"))
+
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        assert ('srcset="fogmap/icon-96.webp 96w, fogmap/icon-192.webp 192w"'
+                in home), home
+        assert 'sizes="56px"' in home, home
+        assert "fogmap/icon.png" not in home, home
+
+        with open(os.path.join(slug_dir, "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        assert ('srcset="../fogmap/icon-96.webp 96w, ../fogmap/icon-192.webp 192w"'
+                in page), page
+        assert 'sizes="96px"' in page, page
+        assert ('srcset="screenshots/shot-01-540.webp 540w, '
+                'screenshots/shot-01-1080.webp 1080w"') in page, page
+        assert 'href="screenshots/shot-01-1080.webp"' in page, page
+        assert 'width="540" height="1200"' in page, page
+        assert 'loading="lazy"' in page and 'decoding="async"' in page, page
+    print("ok: производные WebP, только они в _site, srcset/размеры в разметке")
+
+
+def test_image_derivatives_no_upscale():
+    """2.1: исходник меньше целевой ширины не увеличивается."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        proj = make_project(tmp, screenshots=1)
+        make_image(os.path.join(proj, "screenshots", "shot1.png"), (480, 960))
+        make_image(os.path.join(proj, "assets", "icon.png"), (64, 64))
+        card = _fake_release_card("fogmap", "2026-05-01T10:00:00Z", proj)
+        card["store"]["icon"] = "assets/icon.png"
+        card["icon_missing"] = False
+        card["screenshots"] = ["shot1.png"]
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site([card], [], out)
+        finally:
+            os.chdir(cwd)
+        slug_dir = os.path.join(out, "fogmap")
+        assert os.listdir(os.path.join(slug_dir, "screenshots")) == \
+            ["shot-01-480.webp"], os.listdir(os.path.join(slug_dir, "screenshots"))
+        assert os.path.exists(os.path.join(slug_dir, "icon-64.webp"))
+        assert not os.path.exists(os.path.join(slug_dir, "icon-96.webp"))
+        with open(os.path.join(slug_dir, "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        assert 'srcset="screenshots/shot-01-480.webp 480w"' in page, page
+        assert 'width="480" height="960"' in page, page
+    print("ok: производные не увеличивают исходник сверх его ширины")
+
+
+def test_broken_images_fallbacks():
+    """2.2: битые скриншот и иконка -> WARN, остальное на месте, плейсхолдер."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        proj = make_project(tmp, screenshots=0)
+        os.makedirs(os.path.join(proj, "screenshots"), exist_ok=True)
+        make_image(os.path.join(proj, "screenshots", "shot1.png"), (1080, 2400))
+        with open(os.path.join(proj, "screenshots", "shot2.png"), "wb") as fh:
+            fh.write(b"not an image")
+        with open(os.path.join(proj, "assets", "icon.png"), "wb") as fh:
+            fh.write(b"not an image")
+        card = _fake_release_card("fogmap", "2026-05-01T10:00:00Z", proj)
+        card["store"]["icon"] = "assets/icon.png"
+        card["icon_missing"] = False
+        card["screenshots"] = ["shot1.png", "shot2.png"]
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                render_site([card], [], out)
+        finally:
+            os.chdir(cwd)
+        log = err.getvalue()
+        assert "WARN" in log and "shot2.png" in log and "icon.png" in log, log
+        slug_dir = os.path.join(out, "fogmap")
+        assert os.path.exists(os.path.join(slug_dir, "screenshots",
+                                           "shot-01-540.webp"))
+        assert not any("shot-02" in name for name in
+                       os.listdir(os.path.join(slug_dir, "screenshots")))
+        with open(os.path.join(slug_dir, "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        assert page.count('class="shot"') == 1, page
+        assert "letter" in page, page
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        assert "letter" in home, home
+    print("ok: битые изображения -> WARN + пропуск/плейсхолдер, сборка жива")
+
+
 def _fake_web_card(slug: str, date, project_dir: str) -> dict:
     web_dir = os.path.join(project_dir, f"web-{slug}")
     os.makedirs(web_dir, exist_ok=True)
@@ -944,8 +1077,7 @@ def test_whats_new_on_app_page():
         app["store"]["requirements"] = "Android 8+"
         # скриншот, чтобы на странице была галерея — проверяем позицию секции
         os.makedirs(os.path.join(tmp, "screenshots"), exist_ok=True)
-        with open(os.path.join(tmp, "screenshots", "shot1.png"), "wb") as fh:
-            fh.write(b"\x89PNG fake")
+        make_image(os.path.join(tmp, "screenshots", "shot1.png"))
         app["screenshots"] = ["shot1.png"]
         empty = _fake_release_card("beta", "2026-04-01T10:00:00Z", tmp, notes="")
         web_cards = [_fake_web_card("web-one", "2026-01-02", tmp)]
@@ -980,13 +1112,10 @@ def test_whats_new_on_app_page():
 
 def _fake_valid_clone(repo: str, dest: str, token=None) -> bool:
     """Валидный контракт по пути клона: store.yaml, иконка, 3 скриншота."""
-    os.makedirs(os.path.join(dest, "assets"), exist_ok=True)
-    with open(os.path.join(dest, "assets", "icon.png"), "wb") as fh:
-        fh.write(b"\x89PNG fake")
+    make_image(os.path.join(dest, "assets", "icon.png"), (512, 512))
     os.makedirs(os.path.join(dest, "screenshots"), exist_ok=True)
     for i in range(3):
-        with open(os.path.join(dest, "screenshots", f"shot{i + 1}.png"), "wb") as fh:
-            fh.write(b"\x89PNG fake")
+        make_image(os.path.join(dest, "screenshots", f"shot{i + 1}.png"))
     with open(os.path.join(dest, "store.yaml"), "w", encoding="utf-8") as fh:
         fh.write("name: FogMap\ndescription: Трекер\nicon: assets/icon.png\n")
     return True
@@ -1104,6 +1233,9 @@ if __name__ == "__main__":
     test_web_build_date_and_icon_without_data()
     test_web_build_failures()
     test_sort_by_date_desc()
+    test_image_derivatives_render()
+    test_image_derivatives_no_upscale()
+    test_broken_images_fallbacks()
     test_fetch_web_commit_date()
     test_collect_web_date_from_commit()
     test_fetch_path_commit_date()

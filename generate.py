@@ -30,7 +30,10 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import warnings
 from datetime import datetime, timezone
+
+from PIL import Image, UnidentifiedImageError
 
 import yaml
 
@@ -50,6 +53,13 @@ RELEASES_PER_PAGE = 100
 MAX_RELEASE_PAGES = 10
 # Таймаут команды сборки статики web-записи (build), секунды — как у clone_project.
 BUILD_TIMEOUT = 300
+
+# Производные изображений: ширины в px и качество WebP (design D1–D2).
+SCREENSHOT_WIDTHS = (540, 1080)
+ICON_WIDTHS = (96, 192)
+SCREENSHOT_QUALITY = 80
+ICON_QUALITY = 85
+WEBP_METHOD = 6
 
 # Авто-детект платформ по маскам ассетов (D5): поле platforms не используется.
 PLATFORM_MASKS = (
@@ -296,6 +306,110 @@ def validate_project(project_dir: str, slug: str) -> tuple[dict | None, list[str
         return None, problems
     data["_screenshots"] = shots
     return data, []
+
+
+# ==========================================================================
+# 4.2b: производные изображений (WebP до рендера HTML, ноль падений)
+# ==========================================================================
+
+def _save_webp_variants(src: str, targets: tuple[int, ...], app_out: str,
+                        rel_stem: str, *, quality: int, mode: str,
+                        slug: str, label: str) -> list[dict]:
+    """Сохраняет WebP-варианты шириной из targets (без апскейла).
+
+    Возвращает [{"name", "width", "height"}] относительно app_out. Битый
+    или нечитаемый файл -> [] и WARN: сборка продолжается (design D7).
+    """
+    saved: list[dict] = []
+    image = None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(src) as opened:
+                opened.load()
+                image = opened.convert(mode)
+        for target in targets:
+            width = min(int(target), image.width)
+            if any(variant["width"] == width for variant in saved):
+                continue
+            height = max(1, round(image.height * width / image.width))
+            rel = f"{rel_stem}-{width}.webp"
+            dest = os.path.join(app_out, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            tmp = dest + ".tmp"
+            resized = image.resize((width, height), Image.Resampling.LANCZOS)
+            try:
+                resized.save(tmp, format="WEBP", quality=quality,
+                             method=WEBP_METHOD)
+                os.replace(tmp, dest)
+            finally:
+                resized.close()
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            saved.append({"name": rel, "width": width, "height": height})
+        return saved
+    except (UnidentifiedImageError, OSError, ValueError,
+            Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        for variant in saved:
+            try:
+                os.remove(os.path.join(app_out, variant["name"]))
+            except OSError:
+                pass
+        print(f"[WARN] {slug}: {label} {os.path.basename(src)!r} не читается — "
+              f"пропуск ({exc})", file=sys.stderr)
+        return []
+    finally:
+        if image is not None:
+            image.close()
+
+
+def prepare_card_images(card: dict, out_dir: str) -> None:
+    """Готовит производные карточки в out_dir/<slug> до рендера HTML.
+
+    В карточку складываются icon_variants и previews: разметка использует
+    только готовые производные, исходные файлы в _site не копируются.
+    """
+    slug = card["slug"]
+    app_out = os.path.join(out_dir, slug)
+    os.makedirs(app_out, exist_ok=True)
+    card["icon_variants"] = []
+
+    icon = str(card["store"].get("icon") or "")
+    if icon and not card.get("icon_missing"):
+        src = os.path.join(card["project_dir"], icon)
+        if os.path.isfile(src):
+            card["icon_variants"] = _save_webp_variants(
+                src, ICON_WIDTHS, app_out, "icon", quality=ICON_QUALITY,
+                mode="RGBA", slug=slug, label="иконка")
+
+    previews: list[dict] = []
+    shots_dir = os.path.join(card["project_dir"], "screenshots")
+    for index, shot in enumerate(card.get("screenshots") or [], start=1):
+        src = os.path.join(shots_dir, shot)
+        if not os.path.isfile(src):
+            print(f"[WARN] {slug}: скриншот {shot!r} не найден — пропуск",
+                  file=sys.stderr)
+            continue
+        variants = _save_webp_variants(
+            src, SCREENSHOT_WIDTHS, app_out, f"screenshots/shot-{index:02d}",
+            quality=SCREENSHOT_QUALITY, mode="RGB", slug=slug,
+            label="скриншот")
+        if not variants:
+            continue
+        largest = variants[-1]
+        previews.append({
+            "variants": variants,
+            "width": variants[0]["width"],
+            "height": variants[0]["height"],
+            "full": largest["name"],
+        })
+    card["previews"] = previews
+
+
+def prepare_all_images(cards: list[dict], out_dir: str) -> None:
+    """Готовит производные всех карточек до рендера страниц."""
+    for card in cards:
+        prepare_card_images(card, out_dir)
 
 
 # ==========================================================================
@@ -641,11 +755,21 @@ def letter_placeholder(name: str, size: str = "48") -> str:
 
 
 def app_icon_html(card: dict, css_class: str, size: str = "48", root: str = "") -> str:
-    if card["icon_missing"] or not card["store"].get("icon"):
+    if card.get("icon_missing") or not card["store"].get("icon"):
         return letter_placeholder(card["store"]["name"], size)
-    src = f'{root}{card["slug"]}/icon{os.path.splitext(card["store"]["icon"])[1]}'
-    return (f'<img class="{esc(css_class)}" src="{esc(src)}" alt="Иконка '
-            f'{esc(card["store"]["name"])}" width="96" height="96">')
+    variants = card.get("icon_variants") or []
+    if not variants:
+        return letter_placeholder(card["store"]["name"], size)
+    src = f'{root}{card["slug"]}/{variants[0]["name"]}'
+    srcset = ", ".join(
+        f'{root}{card["slug"]}/{variant["name"]} {variant["width"]}w'
+        for variant in variants
+    )
+    img_sizes = "56px" if css_class == "card-icon" else "96px"
+    return (f'<img class="{esc(css_class)}" src="{esc(src)}" '
+            f'srcset="{esc(srcset)}" sizes="{img_sizes}" alt="Иконка '
+            f'{esc(card["store"]["name"])}" width="{variants[0]["width"]}" '
+            f'height="{variants[0]["height"]}">')
 
 
 SOURCES_SVG = (
@@ -770,11 +894,18 @@ def web_card_html(web_card: dict) -> str:
 
 def gallery_html(card: dict) -> str:
     items = []
-    for shot in card["screenshots"]:
-        src = f"screenshots/{esc(shot)}"
+    for index, preview in enumerate(card.get("previews") or [], start=1):
+        variants = preview["variants"]
+        src = variants[0]["name"]
+        srcset = ", ".join(
+            f'{variant["name"]} {variant["width"]}w' for variant in variants)
         items.append(
-            f'<a class="shot" href="{src}" target="_blank" rel="noopener">'
-            f'<img src="{src}" alt="Скриншот {esc(card['store']['name'])}" loading="lazy"></a>'
+            f'<a class="shot" href="{esc(preview["full"])}" target="_blank" rel="noopener">'
+            f'<img src="{esc(src)}" srcset="{esc(srcset)}" '
+            f'sizes="(max-width: 520px) 90vw, (max-width: 900px) 45vw, 240px" '
+            f'width="{preview["width"]}" height="{preview["height"]}" '
+            f'alt="Скриншот {index} приложения {esc(card["store"]["name"])}" '
+            f'loading="lazy" decoding="async"></a>'
         )
     if not items:
         return ""
@@ -1025,6 +1156,8 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
+    # Производные нужны разметке карточек/страниц — готовим до рендера HTML.
+    prepare_all_images(cards, out_dir)
     pages: list[str] = [""]
 
     # --- главная -----------------------------------------------------------
@@ -1087,20 +1220,6 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
                                canonical=f"{SITE_URL}/{card['slug']}/",
                                content=app, root="../", og_type="website"))
         pages.append(card["slug"])
-
-        # файлы проекта на страницу: иконка + скриншоты
-        icon = store.get("icon")
-        if icon and not card["icon_missing"]:
-            src = os.path.join(card["project_dir"], icon)
-            ext = os.path.splitext(icon)[1] or ".png"
-            if os.path.isfile(src):
-                shutil.copy2(src, os.path.join(out_dir, card["slug"], f"icon{ext}"))
-        shots_src = os.path.join(card["project_dir"], "screenshots")
-        if card["screenshots"] and os.path.isdir(shots_src):
-            shots_dst = os.path.join(out_dir, card["slug"], "screenshots")
-            os.makedirs(shots_dst, exist_ok=True)
-            for shot in card["screenshots"]:
-                shutil.copy2(os.path.join(shots_src, shot), os.path.join(shots_dst, shot))
 
     # --- веб-приложения: /apps/<slug>/ (D1: успех копирования = всё) --------
     for web_card in web_cards:
