@@ -73,7 +73,8 @@ projects:
     changelog: CHANGELOG.md
     release: false
 
-  # GitHub Releases не производятся — релиз = git-тег vX.Y.Z, заметки из changelog.
+  # GitHub Releases публикуются вручную: тег vX.Y.Z, заметки из changelog.
+  # Release-скрипт не разносится: версия в pyproject.toml, артефактов нет.
   benchmark:
     repo: dziominpavel/Benchmark
     path: ../Benchmark
