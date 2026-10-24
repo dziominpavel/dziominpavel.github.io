@@ -19,12 +19,12 @@
 ## 4. Первый релиз
 
 - [x] 4.1 Свернуть `[Unreleased]` в `## [1.0.0] — 2026-10-24 (MINOR)`, оставить пустой `[Unreleased]` и обновить вводный текст changelog; проверить: `py -3 scripts/check-version.py` завершается кодом 0, верхняя версионная секция — `1.0.0`.
-- [ ] 4.2 Закоммитить и запушить `main`, дождаться успешного деплоя GitHub Pages; проверить: живая `/about/` показывает версию `1.0.0`, главная и страница приложения — без версии витрины.
-- [ ] 4.3 Поставить тег `v1.0.0`, запушить его и создать GitHub Release с пользовательским блоком changelog; проверить: `gh release view v1.0.0` показывает заметки, ссылка «История версий» ведёт на страницу релизов.
+- [x] 4.2 Закоммитить и запушить `main`, дождаться успешного деплоя GitHub Pages; проверить: живая `/about/` показывает версию `1.0.0`, главная и страница приложения — без версии витрины.
+- [x] 4.3 Поставить тег `v1.0.0`, запушить его и создать GitHub Release с пользовательским блоком changelog; проверить: `gh release view v1.0.0` показывает заметки, ссылка «История версий» ведёт на страницу релизов.
 
 ## 5. Итоговая проверка
 
-- [ ] 5.1 Проверить change целиком: `py -3 tests/test_generate.py`, `py -3 tests/validate_site.py _site`, `openspec validate add-storefront-version --strict` и `py -3 scripts/check-version.py` завершаются кодом 0.
+- [x] 5.1 Проверить change целиком: `py -3 tests/test_generate.py`, `py -3 tests/validate_site.py _site`, `openspec validate add-storefront-version --strict` и `py -3 scripts/check-version.py` завершаются кодом 0.
 
 ## Workflow follow-up
 
