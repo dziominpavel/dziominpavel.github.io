@@ -19,8 +19,8 @@
 
 ## 4. Миграция и интеграция
 
-- [ ] 4.1 Задеплоить change после `optimize-image-loading` и до удаления заглушек; проверить: пять приложений (GymProgress, VoiceMind, Wishlot, InstagramTracker, YandexMusicDownloader) по-прежнему на витрине.
-- [ ] 4.2 Удалить по три `*-placeholder.png` в пяти репозиториях и запушить; проверить после ближайшей сборки: приложения остаются на витрине, их страницы показывают «Превью» без `<img>`.
+- [x] 4.1 Задеплоить change после `optimize-image-loading` и до удаления заглушек; проверить: пять приложений (GymProgress, VoiceMind, Wishlot, InstagramTracker, YandexMusicDownloader) по-прежнему на витрине.
+- [x] 4.2 Удалить по три `*-placeholder.png` в пяти репозиториях и запушить; проверить после ближайшей сборки: приложения остаются на витрине, их страницы показывают «Превью» без `<img>`.
 - [x] 4.3 Проверить итог: `python tests/test_generate.py`, `python tests/validate_site.py _site` (если есть собранный сайт) и `openspec validate screenshots-optional-with-preview --strict` завершаются кодом 0.
 
 ## Workflow follow-up
