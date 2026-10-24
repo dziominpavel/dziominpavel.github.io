@@ -57,6 +57,8 @@ BUILD_TIMEOUT = 300
 # Производные изображений: ширины в px и качество WebP (design D1–D2).
 SCREENSHOT_WIDTHS = (540, 1080)
 ICON_WIDTHS = (96, 192)
+# Контракт screenshots/: опционально, 0–5 изображений (store-data-contract).
+MAX_SCREENSHOTS = 5
 SCREENSHOT_QUALITY = 80
 ICON_QUALITY = 85
 WEBP_METHOD = 6
@@ -295,12 +297,16 @@ def validate_project(project_dir: str, slug: str) -> tuple[dict | None, list[str
         print(f"[WARN] {slug}: файл иконки {icon!r} не найден — будет буквенный плейсхолдер",
               file=sys.stderr)
 
+    # screenshots/ опционален: 0–5 изображений — валидные состояния.
+    # Лишние файлы не скрывают приложение: публикуются первые пять.
     shots_dir = os.path.join(project_dir, "screenshots")
     shots = [f for f in sorted(os.listdir(shots_dir))
              if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))] \
         if os.path.isdir(shots_dir) else []
-    if not (3 <= len(shots) <= 5):
-        problems.append(f"{slug}: скриншотов {len(shots)}, ожидается 3–5")
+    if len(shots) > MAX_SCREENSHOTS:
+        print(f"[WARN] {slug}: скриншотов {len(shots)}, публикуются первые "
+              f"{MAX_SCREENSHOTS}", file=sys.stderr)
+        shots = shots[:MAX_SCREENSHOTS]
 
     if problems:
         return None, problems
@@ -892,9 +898,32 @@ def web_card_html(web_card: dict) -> str:
                          actions=actions)
 
 
+def preview_html() -> str:
+    """Секция «Превью» вместо галереи, когда нет ни одного превью.
+
+    HTML/CSS без изображений: честное состояние, theme-aware, ноль байт.
+    """
+    return (
+        '<section class="gallery"><h2>Превью</h2>\n      '
+        '<div class="preview-empty">\n        '
+        '<svg viewBox="0 0 24 24" width="48" height="48" fill="none" '
+        'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true">'
+        '<rect x="3" y="5" width="18" height="14" rx="2"/>'
+        '<circle cx="8.5" cy="10.5" r="1.5"/>'
+        '<path d="m21 15-4.5-4.5L7 20"/></svg>\n        '
+        '<p class="preview-empty-title">Скриншоты появятся позже</p>\n        '
+        '<p class="preview-empty-text">Приложение уже доступно — описание '
+        'и релизы выше.</p>\n      </div>\n    </section>'
+    )
+
+
 def gallery_html(card: dict) -> str:
+    previews = card.get("previews") or []
+    if not previews:
+        return preview_html()
     items = []
-    for index, preview in enumerate(card.get("previews") or [], start=1):
+    for index, preview in enumerate(previews, start=1):
         variants = preview["variants"]
         src = variants[0]["name"]
         srcset = ", ".join(
@@ -908,7 +937,7 @@ def gallery_html(card: dict) -> str:
             f'loading="lazy" decoding="async"></a>'
         )
     if not items:
-        return ""
+        return preview_html()
     return '<section class="gallery"><h2>Скриншоты</h2>\n      <div class="shots">\n      \
 ' + "\n      ".join(items) + "\n      </div>\n    </section>"
 

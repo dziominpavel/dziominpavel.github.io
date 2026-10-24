@@ -16,8 +16,8 @@ context: |
   под owner dziominpavel.
 
   Ключевые файлы контракта в потребителях: store.yaml (name, description,
-  icon [обязательна], requirements [опц.]), screenshots/ (3-5, единый
-  размер), version (MAJOR.MINOR.PATCH), dist/ (gitignored, staging).
+  icon [обязательна], requirements [опц.]), screenshots/ (0–5, опционально,
+  единый размер), version (MAJOR.MINOR.PATCH), dist/ (gitignored, staging).
   В сторе: registry.yaml (список репозиториев, ключ = слаг [a-z0-9-]),
   templates/, static/, generate.py.
 

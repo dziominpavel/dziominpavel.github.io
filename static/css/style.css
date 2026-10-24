@@ -775,6 +775,38 @@ p { margin: 0 0 var(--sp-3); }
 
 .gallery h2 { margin-top: 0; }
 
+/* состояние «скриншотов ещё нет»: HTML/CSS без изображений */
+.preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+
+.preview-empty svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.65;
+}
+
+.preview-empty-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.preview-empty-text {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--fs-sm);
+}
+
 .shot img {
   display: block;
   width: 100%;

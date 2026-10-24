@@ -130,13 +130,42 @@ def test_validate_broken_no_crash():
                 fh.write("name: X\ndescription: Y\n")
             store, problems = validate_project(proj, "noicon")
             assert store is None and any("'icon'" in p for p in problems)
-
-        # е) мало скриншотов
-        with tempfile.TemporaryDirectory() as tmp3:
-            proj = make_project(tmp3, screenshots=2)
-            store, problems = validate_project(proj, "e")
-            assert store is None and any("скриншотов" in p for p in problems)
     print("ok: битый контракт -> skip + warning; битая иконка -> плейсхолдер; без исключений")
+
+
+def test_validate_screenshots_optional():
+    """Контракт screenshots/: 0–5 валидны, папка опциональна, >5 -> первые пять."""
+    with tempfile.TemporaryDirectory() as tmp:
+        # а) 0 скриншотов (пустая папка) — приложение публикуется
+        proj = make_project(os.path.join(tmp, "zero"), screenshots=0)
+        store, problems = validate_project(proj, "zero")
+        assert store is not None and problems == [], (store, problems)
+        assert store["_screenshots"] == []
+
+        # б) 1 и 2 скриншота — валидные состояния без добивки
+        for count in (1, 2):
+            proj = make_project(os.path.join(tmp, str(count)), screenshots=count)
+            store, problems = validate_project(proj, f"n{count}")
+            assert store is not None and problems == [], (count, store, problems)
+            assert len(store["_screenshots"]) == count
+
+        # в) папки screenshots/ нет вовсе — валидно
+        proj = make_project(os.path.join(tmp, "missing"), screenshots=0)
+        os.rmdir(os.path.join(proj, "screenshots"))
+        store, problems = validate_project(proj, "missing")
+        assert store is not None and problems == [], (store, problems)
+        assert store["_screenshots"] == []
+
+        # г) 6 скриншотов -> WARN, публикуются первые пять, приложение не скрыто
+        proj = make_project(os.path.join(tmp, "many"), screenshots=6)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            store, problems = validate_project(proj, "many")
+        assert store is not None and problems == [], (store, problems)
+        assert store["_screenshots"] == ["shot1.png", "shot2.png", "shot3.png",
+                                         "shot4.png", "shot5.png"]
+        log = err.getvalue()
+        assert "WARN" in log and "6" in log and "первые 5" in log, log
+    print("ok: screenshots/ 0–5 и отсутствие папки валидны; >5 -> WARN + первые пять")
 
 
 def test_registry_slug_validation():
@@ -772,10 +801,78 @@ def test_broken_images_fallbacks():
             page = fh.read()
         assert page.count('class="shot"') == 1, page
         assert "letter" in page, page
+        assert 'class="preview-empty"' not in page, page
         with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
             home = fh.read()
         assert "letter" in home, home
     print("ok: битые изображения -> WARN + пропуск/плейсхолдер, сборка жива")
+
+
+def _gallery_section(page: str) -> str:
+    match = re.search(r'<section class="gallery">.*?</section>', page, re.S)
+    assert match, page
+    return match.group(0)
+
+
+def test_preview_fallback_and_single_preview():
+    """0 превью -> «Превью» без <img>; 1 превью -> галерея; все битые -> fallback."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        # а) 0 скриншотов: честный блок «Превью» без изображений
+        zero_proj = make_project(os.path.join(tmp, "zero"), screenshots=0)
+        zero = _fake_release_card("empty", "2026-05-01T10:00:00Z", zero_proj)
+        os.chdir(root)
+        try:
+            out_zero = os.path.join(tmp, "site-zero")
+            render_site([zero], [], out_zero)
+        finally:
+            os.chdir(cwd)
+        with open(os.path.join(out_zero, "empty", "index.html"), encoding="utf-8") as fh:
+            zero_page = fh.read()
+        section = _gallery_section(zero_page)
+        assert 'class="preview-empty"' in section, section
+        assert "Скриншоты появятся позже" in section, section
+        assert "<img" not in section, section
+        assert 'class="shots"' not in section, section
+
+        # б) 1 скриншот: галерея без fallback и без добивки до трёх
+        one_proj = make_project(os.path.join(tmp, "one"), screenshots=1)
+        one = _fake_release_card("single", "2026-05-01T10:00:00Z", one_proj)
+        one["screenshots"] = ["shot1.png"]
+        os.chdir(root)
+        try:
+            out_one = os.path.join(tmp, "site-one")
+            render_site([one], [], out_one)
+        finally:
+            os.chdir(cwd)
+        with open(os.path.join(out_one, "single", "index.html"), encoding="utf-8") as fh:
+            one_page = fh.read()
+        section = _gallery_section(one_page)
+        assert 'class="shots"' in section, section
+        assert 'class="preview-empty"' not in section, section
+        assert section.count("<img") == 1, section
+
+        # в) исходники есть, но все битые -> fallback, а не пустая галерея
+        broken_proj = make_project(os.path.join(tmp, "broken"), screenshots=0)
+        with open(os.path.join(broken_proj, "screenshots", "bad.png"), "wb") as fh:
+            fh.write(b"not an image")
+        broken = _fake_release_card("broken", "2026-05-01T10:00:00Z", broken_proj)
+        broken["screenshots"] = ["bad.png"]
+        os.chdir(root)
+        try:
+            out_broken = os.path.join(tmp, "site-broken")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                render_site([broken], [], out_broken)
+        finally:
+            os.chdir(cwd)
+        assert "WARN" in err.getvalue() and "bad.png" in err.getvalue(), err.getvalue()
+        with open(os.path.join(out_broken, "broken", "index.html"), encoding="utf-8") as fh:
+            broken_page = fh.read()
+        section = _gallery_section(broken_page)
+        assert 'class="preview-empty"' in section, section
+        assert "<img" not in section, section
+    print("ok: «Превью» без <img> при 0/битых, галерея при 1 превью")
 
 
 def _fake_web_card(slug: str, date, project_dir: str) -> dict:
@@ -1227,6 +1324,7 @@ def test_collect_downloads_aggregate_and_fallback():
 if __name__ == "__main__":
     test_validate_ok()
     test_validate_broken_no_crash()
+    test_validate_screenshots_optional()
     test_registry_slug_validation()
     test_detect_platforms_variants_and_unknown()
     test_release_card_json()
@@ -1240,6 +1338,7 @@ if __name__ == "__main__":
     test_image_derivatives_render()
     test_image_derivatives_no_upscale()
     test_broken_images_fallbacks()
+    test_preview_fallback_and_single_preview()
     test_fetch_web_commit_date()
     test_collect_web_date_from_commit()
     test_fetch_path_commit_date()
