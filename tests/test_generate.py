@@ -1093,6 +1093,10 @@ def test_whats_new_on_app_page():
         assert 'class="whats-new"' in page, page
         assert page.index('class="app-desc"') < page.index('class="requirements"') \
             < page.index('class="whats-new"') < page.index('class="gallery"'), "порядок блоков"
+        # блок скачивания — сразу после заголовка приложения и до контента
+        assert page.index('class="app-head"') < page.index('class="download"') \
+            < page.index('class="app-desc"'), "порядок: заголовок → скачивание → контент"
+        assert 'class="app-main"' not in page, "обёртка app-main удалена"
         assert ">Все изменения</a>" in page, page
         # пустое тело -> секции нет, страница в остальном полная
         with open(os.path.join(out, "beta", "index.html"), encoding="utf-8") as fh:

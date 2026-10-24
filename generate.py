@@ -1001,7 +1001,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 <body>
   <header class="site-header">
     <div class="site-header-inner">
-      <a class="brand" href="{root}"><img class="brand-mark" src="{root}static/img/logo.png" alt="" width="30" height="30">Мои приложения</a>
+      <a class="brand" href="{root}"><img class="brand-mark" src="{root}static/img/logo.png" alt="" width="30" height="30"><span class="brand-text">Мои приложения</span></a>
       <nav class="site-nav" aria-label="Навигация">
         <a href="{root}">Главная</a>
         <a href="{root}about/">О проекте</a>
@@ -1046,20 +1046,14 @@ INDEX_TEMPLATE = """    <section class="hero">
 
 APP_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / {name}</nav>
     <div class="app">
-      <div class="app-main">
-        <header class="app-head">
-          {icon}
-          <div>
-            <h1>{name}</h1>
-            <p class="app-meta">Версия {version} · {size} · обновлено {date}</p>
-            <p class="card-stats">Скачиваний: {downloads}</p>
-          </div>
-        </header>
-        <p class="app-desc">{description}</p>
-        {requirements}
-        {whats_new}
-        {gallery}
-      </div>
+      <header class="app-head">
+        {icon}
+        <div>
+          <h1>{name}</h1>
+          <p class="app-meta">Версия {version} · {size} · обновлено {date}</p>
+          <p class="card-stats">Скачиваний: {downloads}</p>
+        </div>
+      </header>
       <aside class="download" aria-label="Скачивание">
         <h2>Скачать</h2>
         <div class="app-buttons">
@@ -1068,6 +1062,12 @@ APP_TEMPLATE = """    <nav class="crumbs"><a href="{root}">Главная</a> / 
         {notice}
         <p class="sources"><a href="{repo_url}" rel="noopener">Исходники на GitHub</a></p>
       </aside>
+      <div class="app-body">
+        <p class="app-desc">{description}</p>
+        {requirements}
+        {whats_new}
+        {gallery}
+      </div>
     </div>"""
 
 ABOUT_TEMPLATE = """    <div class="about-body">

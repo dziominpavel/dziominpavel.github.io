@@ -687,7 +687,7 @@ p { margin: 0 0 var(--sp-3); }
   align-items: start;
 }
 
-.app-main {
+.app-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -750,11 +750,19 @@ p { margin: 0 0 var(--sp-3); }
 .sources a:hover { text-decoration: underline; }
 
 @media (min-width: 1024px) {
-  .app { grid-template-columns: minmax(0, 1fr) 340px; }
+  .app {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-areas:
+      "head download"
+      "body download";
+  }
+  .app-head { grid-area: head; }
   .download {
+    grid-area: download;
     position: sticky;
     top: 84px;
   }
+  .app-body { grid-area: body; }
 }
 
 /* --- галерея --------------------------------------------------------------- */
@@ -889,7 +897,114 @@ p { margin: 0 0 var(--sp-3); }
 
 .about-cta { margin: var(--sp-6) 0 0; }
 
-/* узкий экран: логотип hero ужимается, чтобы заголовок не распирал строку */
+/* --- мобильная адаптация --------------------------------------------------- */
+
+/* цели нажатия не меньше 44×44 на узких экранах */
+@media (max-width: 600px) {
+  .site-nav a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .theme-toggle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sources a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+
+/* фильтр каталога: сетка 2×2 вместо переноса с сиротой на второй строке */
+@media (max-width: 600px) {
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    border-radius: var(--r-md);
+  }
+
+  .filter {
+    justify-content: center;
+    min-height: 44px;
+    padding: 8px 10px;
+  }
+
+  /* нечётное число сегментов: последний занимает всю строку */
+  .filters > .filter:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* шапка, hero и галерея: компактная раскладка телефона */
 @media (max-width: 480px) {
-  .hero-logo { width: 64px; height: 64px; }
+  .site-header-inner {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .brand {
+    gap: 8px;
+    min-width: 0;
+    font-size: var(--fs-sm);
+  }
+
+  .brand-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand-mark {
+    width: 26px;
+    height: 26px;
+  }
+
+  .site-nav {
+    flex-wrap: nowrap;
+    gap: 0;
+  }
+
+  .site-nav a {
+    padding: 0 8px;
+    font-size: var(--fs-sm);
+  }
+
+  .hero {
+    gap: var(--sp-4);
+    padding: var(--sp-4) 0 var(--sp-6);
+  }
+
+  .hero-title {
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-2);
+  }
+
+  .hero-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .hero h1 {
+    font-size: var(--fs-xl);
+  }
+
+  .gallery .shots {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--sp-2);
+  }
+}
+
+/* совсем узкий экран: ещё компактнее ссылки навигации */
+@media (max-width: 400px) {
+  .site-nav a {
+    padding: 0 6px;
+    font-size: var(--fs-xs);
+  }
 }
