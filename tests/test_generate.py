@@ -32,6 +32,7 @@ from generate import (  # noqa: E402
     head_commit_date,
     load_registry,
     load_web_registry,
+    read_storefront_version,
     release_card,
     render_site,
     sort_by_date,
@@ -1164,6 +1165,77 @@ def test_notes_body_render():
     print("ok: тело релиза — метки/буллеты/проза, экранирование, пустое тело")
 
 
+def test_storefront_version_read_and_render():
+    """Версия витрины: чтение с мягким отказом и строка внизу «О проекте»."""
+    import generate as gen
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        version_file = os.path.join(tmp, "version")
+        with open(version_file, "w", encoding="utf-8") as fh:
+            fh.write("1.0.0\n")
+        assert read_storefront_version(version_file) == "1.0.0"
+
+        missing = os.path.join(tmp, "missing-version")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            assert read_storefront_version(missing) is None
+        assert "WARN" in err.getvalue() and "missing-version" in err.getvalue()
+
+        bad = os.path.join(tmp, "bad-version")
+        with open(bad, "w", encoding="utf-8") as fh:
+            fh.write("1.0\n")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            assert read_storefront_version(bad) is None
+        assert "WARN" in err.getvalue() and "semver" in err.getvalue()
+
+        app = _fake_release_card("alpha", "2026-05-01T10:00:00Z", tmp)
+        os.makedirs(os.path.join(tmp, "screenshots"), exist_ok=True)
+        make_image(os.path.join(tmp, "screenshots", "shot1.png"))
+        app["screenshots"] = ["shot1.png"]
+
+        original_version_path = gen.STOREFRONT_VERSION_PATH
+        gen.STOREFRONT_VERSION_PATH = version_file
+        os.chdir(root)
+        try:
+            out = os.path.join(tmp, "site")
+            render_site([app], [], out)
+        finally:
+            os.chdir(cwd)
+            gen.STOREFRONT_VERSION_PATH = original_version_path
+
+        with open(os.path.join(out, "about", "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        assert 'class="about-version"' in page, page
+        assert "Версия витрины: 1.0.0" in page, page
+        assert ('href="https://github.com/dziominpavel/dziominpavel.github.io/releases"'
+                in page), page
+        assert page.index('class="about-cta"') < page.index('class="about-version"'), \
+            "строка версии должна стоять после кнопки перехода в каталог"
+
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            home = fh.read()
+        assert "Версия витрины:" not in home, home
+        with open(os.path.join(out, "alpha", "index.html"), encoding="utf-8") as fh:
+            app_page = fh.read()
+        assert "Версия витрины:" not in app_page, app_page
+
+        gen.STOREFRONT_VERSION_PATH = missing
+        os.chdir(root)
+        try:
+            out_missing = os.path.join(tmp, "site-missing")
+            with contextlib.redirect_stderr(io.StringIO()):
+                render_site([app], [], out_missing)
+        finally:
+            os.chdir(cwd)
+            gen.STOREFRONT_VERSION_PATH = original_version_path
+        with open(os.path.join(out_missing, "about", "index.html"), encoding="utf-8") as fh:
+            missing_page = fh.read()
+        assert "about-version" not in missing_page, missing_page
+        assert "Версия витрины:" not in missing_page, missing_page
+    print("ok: версия витрины — чтение, мягкий отказ, строка внизу только на «О проекте»")
+
+
 def test_whats_new_on_app_page():
     """Секция «Что нового» — на странице приложения, в позиции и без неё."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1346,6 +1418,7 @@ if __name__ == "__main__":
     test_render_home_sorted_by_date()
     test_filter_counts_include_web()
     test_notes_body_render()
+    test_storefront_version_read_and_render()
     test_whats_new_on_app_page()
     test_fetch_all_releases_pagination_draft_and_failure()
     test_sum_download_count_multiple_releases()

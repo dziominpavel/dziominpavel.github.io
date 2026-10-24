@@ -100,11 +100,12 @@ projects:
     git: false
     release: false
 
-  # Сама витрина: статический сайт, версия не хранится.
+  # Сама витрина: релизный трек, версия в version. Теги и GitHub Releases
+  # ставятся вручную: release-скрипта и артефактов у статики нет.
   storefront:
     repo: dziominpavel/dziominpavel.github.io
     path: .
-    track: static
-    version_file: null
+    track: release
+    version_file: version
     changelog: CHANGELOG.md
     release: false

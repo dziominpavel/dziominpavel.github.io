@@ -929,6 +929,16 @@ p { margin: 0 0 var(--sp-3); }
 
 .about-cta { margin: var(--sp-6) 0 0; }
 
+/* версия витрины внизу «О проекте» */
+.about-version {
+  margin: var(--sp-3) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.about-version a { color: var(--muted); }
+.about-version a:hover { color: var(--text); }
+
 /* --- мобильная адаптация --------------------------------------------------- */
 
 /* цели нажатия не меньше 44×44 на узких экранах */

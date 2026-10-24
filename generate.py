@@ -40,6 +40,8 @@ import yaml
 REGISTRY_PATH = "registry.yaml"
 DEFAULT_OUT_DIR = "_site"
 SITE_URL = "https://dziominpavel.github.io"
+STOREFRONT_VERSION_PATH = "version"
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 GOATCOUNTER_SITE_ID = "dziominpavel"  # аккаунт владельца (задача 5.3)
 SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 # Относительный путь к файлу данных внутри клонированного web-источника.
@@ -750,6 +752,35 @@ def fmt_date(iso: str | None) -> str:
         return str(iso)
 
 
+def read_storefront_version(path: str | None = None) -> str | None:
+    """Версия витрины из файла version; None + WARN при отсутствии/порче."""
+    version_path = path or STOREFRONT_VERSION_PATH
+    try:
+        with open(version_path, encoding="utf-8") as fh:
+            value = fh.read().strip()
+    except OSError as exc:
+        print(f"[WARN] витрина: не удалось прочитать {version_path} ({exc}) — "
+              f"версия не выводится", file=sys.stderr)
+        return None
+    if not SEMVER_RE.match(value):
+        print(f"[WARN] витрина: {version_path} не semver MAJOR.MINOR.PATCH: "
+              f"{value!r} — версия не выводится", file=sys.stderr)
+        return None
+    return value
+
+
+def storefront_version_html() -> str:
+    """Строка версии витрины для низа страницы «О проекте»."""
+    version = read_storefront_version()
+    if not version:
+        return ""
+    return (
+        '<p class="about-version">Версия витрины: '
+        f'{esc(version)} · <a href="https://github.com/dziominpavel/'
+        'dziominpavel.github.io/releases" rel="noopener">История версий</a></p>'
+    )
+
+
 def letter_placeholder(name: str, size: str = "48") -> str:
     """Цветная буквенная заглушка по первой букве названия."""
     letter = esc(str(name).strip()[:1].upper() or "?")
@@ -1124,6 +1155,7 @@ ABOUT_TEMPLATE = """    <div class="about-body">
         <li><a href="https://www.linkedin.com/in/dziominpavel/" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg><span>LinkedIn <span class="contact-handle">dziominpavel</span></span></a></li>
       </ul>
       <p class="about-cta"><a class="btn btn-primary" href="{root}">Смотреть приложения</a></p>
+      {version}
     </div>"""
 
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1270,7 +1302,8 @@ def render_site(cards: list[dict], web_cards: list[dict], out_dir: str) -> list[
                            description="О каталоге «Мои приложения»: бесплатные "
                                        "приложения для Android, Windows и веба, "
                                        "принципы разработки и контакты автора.",
-                           canonical=f"{SITE_URL}/about/", content=ABOUT_TEMPLATE.format(root="../"),
+                           canonical=f"{SITE_URL}/about/", content=ABOUT_TEMPLATE.format(
+                               root="../", version=storefront_version_html()),
                            root="../"))
     pages.append("about")
 
