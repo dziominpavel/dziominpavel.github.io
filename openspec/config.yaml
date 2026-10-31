@@ -43,3 +43,19 @@ context: |
 #     archive:
 #       guidance:
 #         - Summarize the archive outcome before finishing
+
+rules:
+  specs:
+    - "Текст requirements и сценариев — русский"
+    - "В каждом ### Requirement: обязательно MUST, SHALL или MUST NOT (не «ДОЛЖЕН»)"
+    - "Main spec (openspec/specs/): секции ## Purpose и ## Requirements"
+    - "Delta spec (openspec/changes/*/specs/): ## ADDED/MODIFIED/REMOVED Requirements"
+    - "Каждый requirement — минимум один #### Scenario: с WHEN/THEN"
+    - "Capability = подсистема, не отдельная фича"
+    - "После правок запускать openspec validate --all"
+  proposal:
+    - "Русский язык, кратко: что и зачем"
+  design:
+    - "Русский язык: как реализовать, trade-offs"
+  tasks:
+    - "Русский язык, чекбоксы - [ ] / - [x]"
