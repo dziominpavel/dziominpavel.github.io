@@ -63,6 +63,13 @@ projects:
     version_file: version
     changelog: CHANGELOG.md
 
+  carmusicmeter:
+    repo: dziominpavel/CarMusicMeter
+    path: ../CarMusicMeter
+    track: release
+    version_file: version
+    changelog: CHANGELOG.md
+
   # Нет ассетов в dist/ и нет GitHub Releases — бамп по команде владельца
   # «выпусти версию», release-скрипт не разносится (см. design D3).
   hours-bridge:

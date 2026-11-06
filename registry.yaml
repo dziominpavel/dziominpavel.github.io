@@ -16,6 +16,8 @@ projects:
     repo: dziominpavel/VoiceMind
   wishlot:
     repo: dziominpavel/Wishlot
+  carmusicmeter:
+    repo: dziominpavel/CarMusicMeter
 
 # Веб-приложения: статика публикуется на /apps/<slug>/ — из папки web/
 # репозитория-источника или из результата команды сборки `build` (каталог
