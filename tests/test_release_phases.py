@@ -121,8 +121,8 @@ def with_summary(body: str) -> str:
     return f"{SUMMARY}\n{body}"
 
 
-def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = False,
-                 dispatch_fails: bool = False) -> Path:
+def make_fixture(unreleased_body: str, *, base_version: str = "1.5.2", dirty: bool = False,
+                 gh_ok: bool = False, dispatch_fails: bool = False) -> Path:
     """Фикстурный проект с удалённым «remote», локальным bin/ и gh-shim.
 
     gh_ok=True — shim пропускает всё (успешная публикация и оповещение);
@@ -207,8 +207,8 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
         shim.chmod(0o755)
 
     shutil.copy(SCRIPT, app / "release.ps1")
-    write(app / "version", "1.5.2")
-    write(app / "CHANGELOG.md", changelog(unreleased_body))
+    write(app / "version", base_version)
+    write(app / "CHANGELOG.md", changelog(unreleased_body, version=base_version))
     write(app / "store.yaml", "name: Тест\nicon: icon.png\n")
     (app / "icon.png").write_bytes(b"\x89PNG fake")
     # dist/ — локальный staging, как в реальных проектах (gitignored):
@@ -216,7 +216,7 @@ def make_fixture(unreleased_body: str, *, dirty: bool = False, gh_ok: bool = Fal
     write(app / ".gitignore", "dist/\n")
     dist = app / "dist"
     dist.mkdir()
-    (dist / "app-1.5.2.apk").write_bytes(b"apk")
+    (dist / f"app-{base_version}.apk").write_bytes(b"apk")
 
     # remote с github.com в пути — регэксп `github\.com[:/]` должен пройти
     remote = tmp / "github.com" / "zzz-no-such-owner" / "app.git"
@@ -289,16 +289,35 @@ def test_prepare_refuses_dirty_tree() -> None:
 
 
 def test_prepare_levels() -> None:
+    """Уровень = масштаб: патч по умолчанию, веха на десятке, мажор на BREAKING.
+
+    Пороги release-скрипта: 10 буллетов пользовательского блока или третья
+    цифра 9. Категории changelog на уровень не влияют.
+    """
+    ten = "".join(f"- Пункт номер {i}.\n" for i in range(1, 11))
+    details = "".join(f"- Деталь номер {i}.\n" for i in range(1, 13))
     cases = [
-        ("только фиксы -> PATCH", "### Исправлено\n- Краш\n", (), "1.5.3"),
-        ("фиксы + фича -> MINOR", "### Исправлено\n- Краш\n\n### Добавлено\n- Экспорт\n", (), "1.6.0"),
-        ("BREAKING -> MAJOR", "### Изменено\n- **BREAKING:** смена формата\n", (), "2.0.0"),
-        ("-Major -> MAJOR", "### Исправлено\n- Краш\n", ("-Major",), "2.0.0"),
-        ("без категорий -> MINOR", "- Просто пункт\n", (), "1.6.0"),
-        ("Изменено -> MINOR", "### Изменено\n- Поведение\n", (), "1.6.0"),
+        ("только фиксы -> PATCH",
+         with_summary("### Исправлено\n- Краш\n"), (), "1.5.2", "1.5.3"),
+        ("фиксы + фича -> PATCH",
+         with_summary("### Исправлено\n- Краш\n\n### Добавлено\n- Экспорт\n"), (), "1.5.2", "1.5.3"),
+        ("BREAKING -> MAJOR",
+         with_summary("### Изменено\n- **BREAKING:** смена формата\n"), (), "1.5.2", "2.0.0"),
+        ("-Major -> MAJOR",
+         with_summary("### Исправлено\n- Краш\n"), ("-Major",), "1.5.2", "2.0.0"),
+        ("без категорий -> PATCH",
+         with_summary("- Просто пункт\n"), (), "1.5.2", "1.5.3"),
+        ("Изменено -> PATCH",
+         with_summary("### Изменено\n- Поведение\n"), (), "1.5.2", "1.5.3"),
+        ("десяток пунктов -> MINOR",
+         ten + "\n### Исправлено\n- Краш\n", (), "1.5.2", "1.6.0"),
+        ("десятый патч -> MINOR",
+         with_summary("### Исправлено\n- Краш\n"), (), "1.5.9", "1.6.0"),
+        ("детали под '###' не считаются",
+         with_summary("### Исправлено\n" + details), (), "1.5.2", "1.5.3"),
     ]
-    for name, body, flags, expected in cases:
-        app = make_fixture(with_summary(body))
+    for name, body, flags, base, expected in cases:
+        app = make_fixture(body, base_version=base)
         try:
             rc, out = run_release(app, "-Prepare", *flags)
             version = (app / "version").read_text(encoding="utf-8").strip()
@@ -361,22 +380,22 @@ def test_prepare_accepts_valid_block() -> None:
             rc, out = run_release(app, "-Prepare")
             version = (app / "version").read_text(encoding="utf-8").strip()
             text = (app / "CHANGELOG.md").read_text(encoding="utf-8")
-            check(name, rc == 0 and version == "1.6.0", f"rc={rc} version={version} {out}")
+            check(name, rc == 0 and version == "1.5.3", f"rc={rc} version={version} {out}")
             check(f"{name}: секция свёрнута под заголовок",
-                  "## [1.6.0]" in text and top_block.strip().split("\n")[0] in text, text)
+                  "## [1.5.3]" in text and top_block.strip().split("\n")[0] in text, text)
         finally:
             cleanup(app)
 
 
 def test_prepare_levels_bold_labels() -> None:
-    """Классификатор опознаёт жирные метки блока (без строк '###').
+    """Жирные метки — структура блока, на уровень они не влияют.
 
-    Секция без '###'-категорий: раньше такое падало в «категории не
-    распознаны» -> MINOR, теперь '**Исправлено**' -> PATCH.
+    Классификация идёт по масштабу: '**Добавлено**' больше не даёт MINOR,
+    а BREAKING по-прежнему даёт MAJOR.
     """
     cases = [
         ("**Исправлено** -> PATCH", "**Исправлено**\n- Мигалка больше не моргает.\n", "1.5.3"),
-        ("**Добавлено** -> MINOR", "**Добавлено**\n- Экспорт в CSV готов.\n", "1.6.0"),
+        ("**Добавлено** -> PATCH", "**Добавлено**\n- Экспорт в CSV готов.\n", "1.5.3"),
         ("BREAKING -> MAJOR", "**Изменено**\n- **BREAKING:** смена формата файла.\n", "2.0.0"),
     ]
     for name, body, expected in cases:
@@ -405,7 +424,7 @@ def test_prepare_has_no_side_effects() -> None:
         sections = [ln for ln in (app / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
                     if ln.startswith("## ")]
         check("свёрнутая секция сразу после Unreleased",
-              len(sections) >= 2 and sections[1].startswith("## [1.6.0]"), str(sections[:3]))
+              len(sections) >= 2 and sections[1].startswith("## [1.5.3]"), str(sections[:3]))
         check("[Unreleased] остался первым",
               (app / "CHANGELOG.md").read_text(encoding="utf-8").startswith("## [Unreleased]"))
     finally:
@@ -465,10 +484,10 @@ def test_publish_commits_bump_then_rolls_back_failed_tag() -> None:
         check("gh-shim оборвал публикацию", rc == 1 and "gh release create" in out, out)
         check("оповещение не отправлялось", "blocked: api" not in out and "Витрина оповещена" not in out, out)
         check("бамп закоммичен",
-              git(app, "log", "-1", "--pretty=%s") == "release: 1.6.0 (MINOR)",
+              git(app, "log", "-1", "--pretty=%s") == "release: 1.5.3 (PATCH)",
               git(app, "log", "-1", "--pretty=%s"))
         head_cl = git(app, "show", "HEAD:CHANGELOG.md")
-        check("HEAD содержит секцию новой версии", "## [1.6.0]" in head_cl)
+        check("HEAD содержит секцию новой версии", "## [1.5.3]" in head_cl)
         check("локальный тег откатился", git(app, "tag", "--list") == "")
         remote = app.parent / "github.com" / "zzz-no-such-owner" / "app.git"
         tags = subprocess.run(
@@ -505,10 +524,10 @@ def test_publish_pushes_branch_and_tag_to_remote() -> None:
               remote_head == local_head, f"remote={remote_head} local={local_head}")
 
         remote_tags = git_dir(remote, "tag", "--list")
-        check("тег ушёл в remote", remote_tags == "v1.6.0", remote_tags)
+        check("тег ушёл в remote", remote_tags == "v1.5.3", remote_tags)
 
         top = git(app, "log", "-1", "--pretty=%s")
-        check("коммит бампа на вершине", top == "release: 1.6.0 (MINOR)", top)
+        check("коммит бампа на вершине", top == "release: 1.5.3 (PATCH)", top)
     finally:
         cleanup(app)
 
@@ -526,7 +545,7 @@ def test_publish_survives_failed_store_notification() -> None:
         check("публикация прошла при сбое оповещения", rc == 0, out)
         check("релиз опубликован", "[OK] Релиз" in out, out)
         check("предупреждение вместо ошибки", "[WARN] Витрину оповестить не удалось" in out, out)
-        check("тег остался опубликованным", git(app, "tag", "--list") == "v1.6.0",
+        check("тег остался опубликованным", git(app, "tag", "--list") == "v1.5.3",
               git(app, "tag", "--list"))
     finally:
         cleanup(app)
@@ -578,7 +597,7 @@ def test_publish_notes_from_changelog_section() -> None:
               f"ожидалось={expected!r} получено={captured!r}")
         check("заметки в UTF-8 без BOM", not captured.startswith(b"\xef\xbb\xbf"))
 
-        message = git(app, "cat-file", "-p", "v1.6.0").split("\n\n", 1)[1]
+        message = git(app, "cat-file", "-p", "v1.5.3").split("\n\n", 1)[1]
         check("тело тега = заметкам релиза",
               message.strip() == expected.strip(), f"тег={message!r}")
     finally:
@@ -586,7 +605,7 @@ def test_publish_notes_from_changelog_section() -> None:
 
 
 def test_publish_refuses_stale_asset() -> None:
-    """Гейт чужой версии (шаг 2): в dist/ остался app-1.5.2.apk при выпуске 1.6.0.
+    """Гейт чужой версии (шаг 2): в dist/ остался app-1.5.2.apk при выпуске 1.5.3.
 
     Без пересборки публикация MUST отказать до push ветки и тега, перечислив
     виновный файл и указав пересобрать либо убрать в dist/archive.
