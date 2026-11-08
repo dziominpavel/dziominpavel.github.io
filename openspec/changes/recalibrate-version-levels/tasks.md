@@ -21,7 +21,7 @@
 
 - [x] 4.1 Прогнать `sync-release.ps1 -LocalOnly -Apply` и повторный план: 0 расхождений, включая устранённые benchmark (`docs/versioning.md`, `check-version.py`) и carmusicmeter (блок AGENTS.md).
 - [x] 4.2 Проверить после разноса `check-version.py --all`: 0 ошибок, копии `docs/versioning.md` и `check-version.py` идентичны эталону.
-- [ ] 4.3 Закоммитить и запушить обновлённые копии в каждом дочернем репозитории. Проверка: `git status --porcelain` пуст в каждом проекте, в `git log -1 --format=%B` нет строк `Generated with` и `Co-Authored-By`.
+- [x] 4.3 Закоммитить и запушить обновлённые копии во всех проектах, кроме FogMap (пропущен по указанию владельца — там идёт работа); TempProject без git. Проверка: наши файлы не значатся в `git status`, ветка совпадает с `@{u}` (ahead=0, behind=0), в сообщениях нет `Generated with` и `Co-Authored-By`; в Benchmark блок AGENTS.md закоммичен без чужих правок файла.
 - [x] 4.4 Сверить 8 копий `release.ps1` с эталоном побайтно и убедиться, что каждая печатает новую `$SCRIPT_VERSION`.
 
 ## 5. Интеграционная проверка
