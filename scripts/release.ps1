@@ -4,8 +4,11 @@
 # копий между репозиториями (разнос копий — см. scripts/sync-release.ps1 в репо витрины).
 #
 # Две фазы (см. capability app-release-pipeline):
-#   release.ps1 -Prepare  — ДО сборки: классифицирует ## [Unreleased], записывает
-#                           новый номер в файл version, сворачивает секцию.
+#   release.ps1 -Prepare  — ДО сборки: определяет уровень по шкале масштаба
+#                           (патч по умолчанию; веха MINOR при 10 пользовательских
+#                           буллетах или третьей цифре 9; MAJOR при BREAKING или
+#                           -Major), записывает новый номер в файл version,
+#                           сворачивает секцию.
 #                           Отказывается, если в [Unreleased] нет блока выше
 #                           первой строки '###' или блок нарушает формат-контракт
 #                           (жирные метки категорий и буллеты, ≤140 символов,
@@ -37,7 +40,7 @@ param(
     [switch]$Major
 )
 
-$SCRIPT_VERSION = "1.4.2"
+$SCRIPT_VERSION = "1.5.0"
 Write-Host "release.ps1 v$SCRIPT_VERSION"
 
 function Fail([string]$Message) {
@@ -51,6 +54,11 @@ Set-Location $ProjectRoot
 $VersionFilePath = Join-Path $ProjectRoot "version"
 $ChangelogPath = Join-Path $ProjectRoot "CHANGELOG.md"
 $SemVerPattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$'
+
+# Пороги шкалы масштаба (docs/versioning.md): веха наступает на десятке — по
+# числу пользовательских пунктов или по числу уже выпущенных патчей.
+$MinorBulletThreshold = 10
+$PatchCeiling = 9
 
 # --- Чтение файлов ----------------------------------------------------------
 
@@ -201,16 +209,29 @@ function Get-NotesBlockProblems([object[]]$Notes) {
 
 # --- Классификация ----------------------------------------------------------
 
-function Resolve-ReleaseLevel([object[]]$Body, [bool]$ForceMajor) {
+function Get-UserBlockBullets([object[]]$Body) {
+    # Масштаб релиза меряется тем же блоком, что уходит в заметки: буллеты
+    # выше первой строки '###'. Инженерные детали под категориями не считаются.
+    $count = 0
+    foreach ($line in @($Body)) {
+        $text = "$line"
+        if ($text -match '^###') { break }
+        if ($text -match '^\s*-\s+\S') { $count++ }
+    }
+    return $count
+}
+
+function Resolve-ReleaseLevel([object[]]$Body, [bool]$ForceMajor, [string]$Current) {
+    # Шкала масштаба, а не SemVer (см. docs/versioning.md): патч — обычный
+    # релиз, веха — накопленный десяток (пунктов или патчей), мажор — глобальная
+    # смена проекта. Характер изменений на уровень не влияет.
     if ($ForceMajor) { return "MAJOR" }
     $text = Get-UnreleasedText $Body
     if ($text -match '(?i)BREAKING') { return "MAJOR" }
-    # наивысший уровень выигрывает: Добавлено/Изменено -> MINOR раньше PATCH;
-    # категории опознаются и в строках '###', и в жирных метках блока '**…**'
-    if ($text -match '(?m)^\s*(?:###.*|\*\*)(\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d|\u0418\u0437\u043c\u0435\u043d\u0435\u043d|Added|Changed|New)') { return "MINOR" }
-    if ($text -match '(?m)^\s*(?:###.*|\*\*)(\u0418\u0441\u043f\u0440\u0430\u0432\u043b\u0435\u043d|Fixed)') { return "PATCH" }
-    # категории не распознаны, но пункты есть — никогда не заявлять «только фиксы»
-    return "MINOR"
+    if ((Get-UserBlockBullets $Body) -ge $MinorBulletThreshold) { return "MINOR" }
+    $patch = [int]($Current.Split('.')[2])
+    if ($patch -ge $PatchCeiling) { return "MINOR" }
+    return "PATCH"
 }
 
 function Get-BumpedVersion([string]$Current, [string]$Level) {
@@ -280,7 +301,7 @@ if ($Prepare) {
               ($dirty -join "`n"))
     }
 
-    $level = Resolve-ReleaseLevel $cl.Body $Major.IsPresent
+    $level = Resolve-ReleaseLevel $cl.Body $Major.IsPresent $version
     $newVersion = Get-BumpedVersion $version $level
     if ($newVersion -eq $version) {
         Fail "Новая версия совпала с текущей ($version) — нечему бампиться."

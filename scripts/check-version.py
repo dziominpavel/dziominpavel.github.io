@@ -22,6 +22,10 @@
    символов; символ '`' запрещён; секция с пунктами не начинается с `###`.
    Пустая секция (нет пунктов) не проверяется — это подсказка NO_BUMP.
    Версионные секции, включая исторические, не проверяются.
+7. Метка уровня верхней версионной секции — совпадает с приращением номера
+   относительно предыдущей секции с меткой (MAJOR/MINOR/PATCH), третья цифра
+   помеченной версии — в диапазоне 0-9. Секции без метки уровня и случаи без
+   предыдущей метки не проверяются (история до правила шкалы масштаба).
 
 Код возврата: 0 — ок, 1 — ошибка.
 """
@@ -37,6 +41,8 @@ SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 UNRELEASED_HEAD = re.compile(r"^## \[Unreleased\]\s*$")
 VERSION_HEAD = re.compile(r"^## \[?(\d+\.\d+\.\d+)\]?")
 ANY_HEAD = re.compile(r"^## ")
+VERSION_HEAD_FULL = re.compile(r"^## \[?(\d+)\.(\d+)\.(\d+)\]?(.*)$")
+LEVEL_IN_HEAD = re.compile(r"\((MAJOR|MINOR|PATCH)\)")
 PYPROJECT_VERSION = re.compile(r'^\s*version\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
@@ -173,6 +179,70 @@ def unreleased_block_problems(text: str) -> list[str]:
     return problems
 
 
+def version_sections(text: str) -> list[tuple[tuple[int, int, int], str | None]]:
+    """Секции версий в порядке файла: (номер, метка уровня или None)."""
+    out: list[tuple[tuple[int, int, int], str | None]] = []
+    for line in text.splitlines():
+        m = VERSION_HEAD_FULL.match(line.strip())
+        if not m:
+            continue
+        level = None
+        lm = LEVEL_IN_HEAD.search(m.group(4))
+        if lm:
+            level = lm.group(1)
+        out.append(((int(m.group(1)), int(m.group(2)), int(m.group(3))), level))
+    return out
+
+
+def expected_bump_level(
+    prev: tuple[int, int, int], cur: tuple[int, int, int]
+) -> str | None:
+    """Уровень одного приращения: MAJOR/MINOR/PATCH или None для нестандартного скачка."""
+    if cur[0] == prev[0] + 1 and cur[1] == 0 and cur[2] == 0:
+        return "MAJOR"
+    if cur[0] == prev[0] and cur[1] == prev[1] + 1 and cur[2] == 0:
+        return "MINOR"
+    if cur[0] == prev[0] and cur[1] == prev[1] and cur[2] == prev[2] + 1:
+        return "PATCH"
+    return None
+
+
+def level_problems(text: str) -> list[str]:
+    """Сверка метки уровня верхней секции с номером (см. docs/versioning.md).
+
+    Проверяется только верхняя секция с меткой уровня: метка должна совпадать
+    с приращением номера относительно предыдущей секции с меткой, а третья
+    цифра — лежать в диапазоне 0-9. Секции без метки (история до правила
+    шкалы масштаба) и случаи без предыдущей метки не проверяются: историю
+    задним числом не переписывают.
+    """
+
+    def fmt(v: tuple[int, int, int]) -> str:
+        return ".".join(map(str, v))
+
+    sections = version_sections(text)
+    if not sections:
+        return []
+    version, level = sections[0]
+    if level is None:
+        return []
+    problems: list[str] = []
+    if version[2] > 9:
+        problems.append(
+            f"версия {fmt(version)} помечена {level}, но третья цифра больше 9 — "
+            "серия должна была закрыться вехой"
+        )
+    prev = next(((v, lv) for v, lv in sections[1:] if lv is not None), None)
+    if prev is not None:
+        expected = expected_bump_level(prev[0], version)
+        if expected is not None and expected != level:
+            problems.append(
+                f"уровень {level} не совпадает с номером: "
+                f"{fmt(prev[0])} -> {fmt(version)} даёт {expected}"
+            )
+    return problems
+
+
 def check_changelog(changelog: Path, res: Result) -> tuple[str | None, str | None]:
     """Проверяет структуру changelog. Возвращает (текст, верхняя версионная секция)."""
     if not changelog.exists():
@@ -233,6 +303,8 @@ def check_project(
     if text is not None:
         for problem in unreleased_block_problems(text):
             res.fail(f"{changelog_name}: блок [Unreleased]: {problem}")
+        for problem in level_problems(text):
+            res.fail(f"{changelog_name}: {problem}")
 
     if track == "static":
         if version_file:
