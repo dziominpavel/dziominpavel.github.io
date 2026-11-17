@@ -18,10 +18,14 @@
 - Рабочий цикл: `/openspec-propose` → `/openspec-apply-change` →
   `/openspec-sync-specs` либо `openspec archive`. Планирование и реализация —
   разные шаги, поэтому спеки правит только соответствующий этап.
-- Скиллы цикла генерирует CLI: DeepSeek Harness — `.dsh/skills/`
-  (`openspec init --tools dsh`), OpenCode — `.opencode/skills/` и команды
-  `.opencode/commands/opsx-*` (`--tools opencode`). Сгенерированное руками
-  не править; обновление — `openspec update` после апгрейда CLI.
+- Скиллы цикла ставит CLI в единый `.agents/skills/` (OpenSpec 2.x; обновление —
+  `openspec update` после апгрейда CLI), отдельных копий под каждый инструмент
+  больше нет. Hermes читает этот каталог из репозитория, внесённого в
+  `skills.trusted_project_dirs` (`hermes skills trust <path>`); слэш-команд нет —
+  скилл находится по имени. В DeepSeek Harness навыки приходят из профиля —
+  плагин `dsh-skillpack`, вызовы `/openspec-*`. `.hermes/skills/` держать пустым:
+  вторая копия даёт дубль имени, и Hermes отказывается выбирать скилл
+  (Ambiguous skill name).
 - Перед коммитом: `openspec validate --all` (exit 0; предупреждения о длинных
   requirements допустимы).
 
